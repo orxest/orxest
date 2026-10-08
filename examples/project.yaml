@@ -1,0 +1,100 @@
+# Orxest project configuration (example).
+#
+# Import through the API or the web UI:
+#   POST /api/projects/import          create a project from this file
+#   POST /api/projects/{id}/config     apply it to an existing project
+#   POST /api/projects/validate        validate without applying
+#
+# The database remains authoritative at runtime: this file is a convenient way
+# to describe a project, not a second source of truth.
+#
+# See docs/configuration.md for every field.
+
+version: 1
+
+project:
+  name: example-project
+  description: Example project managed by Orxest
+
+repository:
+  path: /workspace/example
+  url: ""
+  target_branch: main
+  # Defaults to <path>/.orxest/worktrees
+  worktree_root: ""
+
+agents:
+  - name: codex-architect
+    harness: codex
+    model: configured-model-1
+    reasoning: medium
+    max_concurrent_executions: 1
+
+  - name: codex-senior
+    harness: codex
+    model: configured-model-2
+    reasoning: high
+    max_concurrent_executions: 1
+
+  - name: codex-tester
+    harness: codex
+    model: configured-model-1
+    reasoning: medium
+
+  - name: codex-reviewer
+    harness: codex
+    model: configured-model-2
+    reasoning: high
+
+roles:
+  - architect
+  - senior-developer
+  - tester
+  - reviewer
+
+assignments:
+  - agent: codex-architect
+    role: architect
+    priority: 10
+  - agent: codex-senior
+    role: senior-developer
+    priority: 10
+  - agent: codex-tester
+    role: tester
+    priority: 10
+  - agent: codex-reviewer
+    role: reviewer
+    priority: 10
+
+workflow:
+  name: standard
+  description: Architecture, implementation, testing and review with rework loops.
+  steps:
+    - name: architecture
+      role: architect
+      instructions: Produce a concrete technical design; do not implement it.
+      on_success: next
+      on_failure: retry
+      max_attempts: 2
+
+    - name: implementation
+      role: senior-developer
+      instructions: Implement the change end to end, including tests.
+      on_success: next
+      on_failure: retry
+
+    - name: testing
+      role: tester
+      instructions: Try to falsify the implementation against the acceptance criteria.
+      on_success: next
+      # Failing tests send the task back to implementation instead of failing it.
+      on_failure: implementation
+
+    - name: review
+      role: reviewer
+      instructions: Approve only if you would merge this yourself.
+      # A human (or the API) must approve before the task is integrated.
+      approval_gate: true
+      on_success: done
+      on_failure: implementation
+      on_rework: implementation

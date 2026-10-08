@@ -1,0 +1,89 @@
+# Orxest server configuration (example).
+#
+# Copy to orxest.yaml and adjust. Every field is optional.
+# See docs/configuration.md for the full reference.
+
+server:
+  host: 127.0.0.1
+  port: 8787
+  # Serve everything under a prefix, for example behind nginx at /orxest.
+  base_path: ""
+  # Only needed when the Vite dev server (http://localhost:5173) talks to this
+  # server directly instead of through its proxy.
+  dev_cors_origins: []
+
+database:
+  path: orxest.db
+  busy_timeout: 10s
+  max_open_conns: 8
+
+orchestration:
+  # Global cap on concurrently running executions.
+  max_concurrent_executions: 4
+  # How often the scheduler re-evaluates ready work. Explicit triggers (task
+  # completion, retry, approval) run immediately regardless of this interval.
+  poll_interval: 1s
+  execution_timeout: 30m
+  shutdown_grace: 10s
+  event_buffer_size: 1024
+  # Stored output lines per execution. Raw logs are also kept on disk.
+  retain_execution_events: 5000
+  auto_start_scheduler: true
+
+harness:
+  codex:
+    binary: codex
+    # Used when an agent configuration has no model of its own.
+    default_model: ""
+    # read-only | workspace-write | danger-full-access
+    sandbox: workspace-write
+    # Do not leave Codex session files behind.
+    ephemeral: true
+    skip_git_repo_check: false
+    # Appended to every invocation as separate process arguments.
+    extra_args: []
+    env: {}
+    # Optional OpenAI-compatible endpoint, exported as OPENAI_BASE_URL.
+    base_url: ""
+
+  # Pi coding agent (https://github.com/earendil-works/pi).
+  # Agents configured with "harness": "pi" use these defaults.
+  pi:
+    binary: pi
+    # Defaults for agents that do not set their own provider/model.
+    provider: ""
+    model: ""
+    # off | minimal | low | medium | high | xhigh
+    thinking: ""
+    # Pi sessions are ephemeral by default; Orxest keeps its own history.
+    sessions: false
+    session_dir: ""
+    # Keep Pi's settings, models, credentials and sessions out of ~/.pi/agent.
+    config_dir: ""
+    # approve | deny | "" (keep Pi's saved decision). Non-interactive runs never
+    # prompt, so "approve" is needed to load a project's .pi resources.
+    project_trust: ""
+    offline: false
+    # Appended to every invocation as separate process arguments.
+    extra_args: []
+    # Provider credentials belong here or in the ambient environment, never in
+    # the Orxest database.
+    env: {}
+
+  # Deterministic harness for trying Orxest without a coding agent. Agents must
+  # then be configured with "harness": "fake".
+  fake:
+    enabled: false
+
+decision:
+  # disabled (default, deterministic policies) or http.
+  provider: disabled
+  endpoint: ""
+  model: ""
+  timeout: 5s
+  # Limit which questions are delegated. Empty means all.
+  kinds: []
+
+log:
+  level: info
+  format: text

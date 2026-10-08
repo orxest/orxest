@@ -30,3 +30,23 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Orxest
+/bin/
+/orxest
+/orxest.db
+/orxest.db-shm
+/orxest.db-wal
+*.db
+*.db-shm
+*.db-wal
+.cache/
+
+# Frontend
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+
+# Local configuration
+orxest.yaml
+!examples/orxest.yaml

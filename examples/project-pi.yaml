@@ -1,0 +1,96 @@
+# Orxest project configuration using Pi as the coding agent.
+#
+#   POST /api/projects/import      create a project from this file
+#
+# Prerequisites:
+#   * `pi` on PATH and at least one provider configured
+#     (check with `pi --list-models`)
+#   * provider credentials in the Orxest process environment, for example
+#     GEMINI_API_KEY, ANTHROPIC_API_KEY or OPENAI_API_KEY
+#
+# Pi has no built-in sandbox: its tools run with the permissions of the Orxest
+# process. See docs/operations.md before running it on an untrusted repository.
+
+version: 1
+
+project:
+  name: pi-example-project
+  description: Example project driven by the Pi coding agent
+
+repository:
+  path: /workspace/example
+  target_branch: main
+
+agents:
+  - name: pi-architect
+    harness: pi
+    model: gemini-2.5-pro
+    reasoning: medium
+    instructions: Produce a concrete technical design; do not implement it.
+
+  - name: pi-senior
+    harness: pi
+    model: gemini-2.5-pro
+    reasoning: high
+    max_concurrent_executions: 1
+    instructions: Implement the change end to end, including tests.
+
+  - name: pi-tester
+    harness: pi
+    model: gemini-2.5-flash
+    reasoning: medium
+    instructions: Try to falsify the implementation against the acceptance criteria.
+
+  - name: pi-reviewer
+    harness: pi
+    model: gemini-2.5-pro
+    reasoning: high
+    options:
+      # Only the tools a reviewer needs; keeps the review stage read-mostly.
+      exclude_tools: edit,write
+
+roles:
+  - architect
+  - senior-developer
+  - tester
+  - reviewer
+
+assignments:
+  - agent: pi-architect
+    role: architect
+    priority: 10
+  - agent: pi-senior
+    role: senior-developer
+    priority: 10
+  - agent: pi-tester
+    role: tester
+    priority: 10
+  - agent: pi-reviewer
+    role: reviewer
+    priority: 10
+
+workflow:
+  name: standard
+  steps:
+    - name: architecture
+      role: architect
+      on_success: next
+      on_failure: retry
+      max_attempts: 2
+
+    - name: implementation
+      role: senior-developer
+      on_success: next
+      on_failure: retry
+
+    - name: testing
+      role: tester
+      on_success: next
+      on_failure: implementation
+
+    - name: review
+      role: reviewer
+      approval_gate: true
+      on_success: done
+      on_failure: implementation
+      on_rework: implementation

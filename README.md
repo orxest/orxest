@@ -29,6 +29,7 @@ execution.
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
 - Configuration: [`docs/configuration.md`](docs/configuration.md)
 - Operations guide: [`docs/operations.md`](docs/operations.md)
+- Slides: [`docs/orxest-presentation.html`](docs/orxest-presentation.html) — create a project and assign agents (open in a browser)
 - REST/SSE API: [`docs/openapi.json`](docs/openapi.json) and `GET /api/openapi.json`
 
 ---

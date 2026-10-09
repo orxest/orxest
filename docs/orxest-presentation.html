@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Orxest — create a project, assign your agents</title>
+<style>
+  /* Palette mirrors the Orxest console theme (zinc, dark) so the deck feels like
+     part of the product. No external assets: this file works offline. */
+  :root {
+    --bg: #09090b;
+    --panel: #0e0e11;
+    --panel-2: #131317;
+    --muted: #1b1b1f;
+    --fg: #fafafa;
+    --fg-dim: #a1a1aa;
+    --fg-faint: #71717a;
+    --border: #27272a;
+    --border-soft: #1f1f23;
+    --primary: #fafafa;
+    --primary-fg: #18181b;
+    --accent: #7dd3fc;
+    --success: #4ade80;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --purple: #c4b5fd;
+    --info: #93c5fd;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: var(--sans); font-size: 16px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ---------- deck shell ---------- */
+  #deck { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  #stage { position: relative; flex: 1; overflow: hidden; }
+  .slide {
+    position: absolute; inset: 0; display: none;
+    padding: 40px 56px 56px;
+    overflow: auto;
+    animation: fade .18s ease-out;
+  }
+  .slide.active { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* ---------- typography ---------- */
+  h1 { font-size: 40px; line-height: 1.1; margin: 0 0 8px; letter-spacing: -.02em; }
+  h2 { font-size: 26px; line-height: 1.15; margin: 0 0 4px; letter-spacing: -.01em; }
+  h3 { font-size: 15px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-faint); font-weight: 600; }
+  p { margin: 0 0 10px; color: var(--fg-dim); }
+  .lead { font-size: 18px; color: var(--fg-dim); max-width: 62ch; }
+  .slide-head { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; margin-bottom: 22px; border-bottom: 1px solid var(--border-soft); padding-bottom: 14px; }
+  .kicker { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--fg-faint); font-weight: 600; }
+  .step-no {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 8px; background: var(--primary); color: var(--primary-fg);
+    font-size: 13px; font-weight: 700; margin-right: 10px;
+  }
+  ul, ol { margin: 0 0 10px; padding-left: 20px; color: var(--fg-dim); }
+  li { margin: 3px 0; }
+  strong { color: var(--fg); font-weight: 600; }
+  code, .mono { font-family: var(--mono); font-size: .92em; }
+  .dim { color: var(--fg-faint); }
+  .small { font-size: 13px; }
+
+  /* ---------- layout helpers ---------- */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; align-items: start; }
+  .cols-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .cols-6040 { display: grid; grid-template-columns: 1.15fr .85fr; gap: 26px; align-items: start; }
+  .stack { display: flex; flex-direction: column; gap: 14px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .spacer { height: 8px; }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+  .card.tight { padding: 12px 14px; }
+  .card h4 { margin: 0 0 6px; font-size: 14px; }
+  .card p { margin: 0; font-size: 13.5px; }
+  .card .card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .card .card-head .title { font-weight: 600; font-size: 14px; }
+  .card .card-head .sub { font-size: 12.5px; color: var(--fg-faint); }
+
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); background: var(--muted); color: var(--fg-dim); white-space: nowrap; }
+  .badge.mono { font-family: var(--mono); font-weight: 500; }
+  .badge.success { color: #052e16; background: var(--success); border-color: transparent; }
+  .badge.info { color: #082f49; background: var(--info); border-color: transparent; }
+  .badge.warn { color: #451a03; background: var(--warn); border-color: transparent; }
+  .badge.danger { color: #450a0a; background: var(--danger); border-color: transparent; }
+  .badge.purple { color: #2e1065; background: var(--purple); border-color: transparent; }
+  .badge.outline { background: transparent; }
+
+  pre { margin: 0; background: #08080a; border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; overflow: auto; font-family: var(--mono); font-size: 12.6px; line-height: 1.55; color: #e4e4e7; }
+  pre .c { color: var(--fg-faint); }
+  pre .k { color: var(--purple); }
+  pre .s { color: var(--success); }
+  pre .n { color: var(--warn); }
+  pre .f { color: var(--accent); }
+  .filename { font-family: var(--mono); font-size: 11.5px; color: var(--fg-faint); margin-bottom: 6px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  th { color: var(--fg-faint); font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+  td.mono, th.mono { font-family: var(--mono); font-size: 12.3px; }
+
+  /* ---------- pipeline diagram ---------- */
+  .pipeline { display: flex; align-items: center; gap: 0; flex-wrap: wrap; }
+  .node { border: 1px solid var(--border); background: var(--panel); border-radius: 8px; padding: 8px 12px; font-size: 12.5px; text-align: center; }
+  .node .k { display: block; font-size: 10.5px; color: var(--fg-faint); text-transform: uppercase; letter-spacing: .07em; }
+  .node.hot { border-color: #3f3f46; background: var(--panel-2); }
+  .arrow { color: var(--fg-faint); padding: 0 7px; font-size: 13px; }
+
+  /* ---------- console mockups (illustrative reproductions of the real UI) ---------- */
+  .ui { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.35); }
+  .ui-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #3f3f46; }
+  .ui-url { font-family: var(--mono); font-size: 11.5px; color: var(--fg-faint); margin-left: 6px; }
+  .ui-body { padding: 16px; }
+  .ui-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); padding: 0 12px; background: var(--panel-2); }
+  .ui-tab { padding: 9px 11px; font-size: 12.5px; color: var(--fg-faint); border-bottom: 2px solid transparent; }
+  .ui-tab.on { color: var(--fg); border-bottom-color: var(--fg); font-weight: 600; }
+  .ui-h1 { font-size: 17px; font-weight: 600; margin: 0 0 2px; }
+  .ui-sub { font-size: 12.5px; color: var(--fg-faint); margin: 0 0 14px; }
+  .ui-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; background: #0b0b0e; }
+  .ui-card > .h { font-size: 13.5px; font-weight: 600; margin-bottom: 2px; }
+  .ui-card > .d { font-size: 12px; color: var(--fg-faint); margin-bottom: 10px; }
+  .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 9px; }
+  .field > label { font-size: 12px; font-weight: 600; color: #d4d4d8; }
+  .field > .hint { font-size: 11px; color: var(--fg-faint); }
+  .input, .select, .textarea {
+    border: 1px solid var(--border); background: #08080a; color: var(--fg-dim);
+    border-radius: 8px; padding: 7px 9px; font-size: 12.5px; font-family: var(--sans);
+  }
+  .input.mono { font-family: var(--mono); }
+  .textarea { min-height: 46px; }
+  .select { display: flex; align-items: center; justify-content: space-between; }
+  .select .caret { color: var(--fg-faint); font-size: 10px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; padding: 7px 12px; font-size: 12.5px; font-weight: 600; border: 1px solid var(--border); background: var(--muted); color: var(--fg); }
+  .btn.primary { background: var(--primary); color: var(--primary-fg); border-color: transparent; }
+  .btn.ghost { background: transparent; }
+  .check { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--fg-dim); }
+  .box { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--border); background: #08080a; flex: none; margin-top: 1px; }
+  .box.on { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); text-align: center; line-height: 13px; font-size: 10px; font-weight: 700; }
+  .agent-row { border: 1px dashed var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: #0a0a0d; }
+  .agent-row .head { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; color: var(--fg-faint); margin-bottom: 8px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 10px; }
+  .dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); padding: 16px; box-shadow: 0 24px 60px rgba(0,0,0,.5); }
+  .dialog .h { font-size: 15px; font-weight: 600; }
+  .dialog .d { font-size: 12.5px; color: var(--fg-faint); margin: 4px 0 12px; }
+  .toast { position: absolute; right: 14px; bottom: 14px; background: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; font-size: 12px; }
+
+  .callout { border-left: 3px solid var(--accent); background: rgba(125,211,252,.07); padding: 11px 14px; border-radius: 0 8px 8px 0; font-size: 13.5px; color: var(--fg-dim); }
+  .callout.warn { border-color: var(--warn); background: rgba(251,191,36,.07); }
+  .callout.danger { border-color: var(--danger); background: rgba(248,113,113,.07); }
+  .callout strong { color: var(--fg); }
+  .label-illus { font-size: 11px; color: var(--fg-faint); letter-spacing: .04em; margin: 0 0 6px; display: flex; align-items: center; gap: 6px; }
+  .label-illus::before { content: "▣"; color: var(--fg-faint); }
+
+  /* title + closing slides */
+  .hero { height: 100%; display: flex; flex-direction: column; justify-content: center; }
+  .hero h1 { font-size: 56px; }
+  .hero .rule { width: 84px; height: 3px; background: var(--primary); margin: 22px 0; }
+  .principle { font-size: 17px; color: var(--fg); border-left: 3px solid var(--primary); padding-left: 14px; }
+  .footer-meta { margin-top: 26px; font-size: 12.5px; color: var(--fg-faint); display: flex; gap: 18px; flex-wrap: wrap; }
+
+  /* ---------- chrome ---------- */
+  #bar { height: 34px; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-top: 1px solid var(--border-soft); background: var(--panel); font-size: 12px; color: var(--fg-faint); }
+  #bar .grow { flex: 1; }
+  #hint { font-size: 11.5px; }
+  #nav { display: flex; gap: 5px; }
+  #nav button { width: 7px; height: 7px; padding: 0; border-radius: 50%; border: 1px solid var(--border); background: var(--muted); cursor: pointer; }
+  #nav button.on { background: var(--fg); border-color: var(--fg); }
+  #progress { position: absolute; top: 0; left: 0; height: 2px; background: var(--fg); width: 0; transition: width .18s ease; z-index: 5; }
+  .navbtn { border: 1px solid var(--border); background: var(--muted); color: var(--fg); border-radius: 6px; padding: 2px 8px; cursor: pointer; font-size: 12px; }
+  .navbtn:disabled { opacity: .4; cursor: default; }
+
+  @media (max-width: 1100px) {
+    .cols, .cols-6040, .cols-3, .grid3 { grid-template-columns: 1fr; }
+    .slide { padding: 24px 22px 40px; }
+    h1 { font-size: 30px; } .hero h1 { font-size: 38px; }
+  }
+  @media print {
+    body { overflow: visible; background: #fff; color: #000; }
+    #deck { position: static; } #stage { overflow: visible; } #bar, #progress { display: none !important; }
+    .slide { position: static; display: block !important; page-break-after: always; padding: 18mm 14mm; }
+    .ui, pre, .card { box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<div id="deck">
+  <div id="stage">
+
+    <!-- 1 ─────────────────────────────────────────────────────────── -->
+    <section class="slide active">
+      <div class="hero">
+        <div class="kicker">Orxest · project-centric orchestration for AI-assisted development</div>
+        <div class="rule"></div>
+        <h1>Create a project.<br />Decide which agents work on it.</h1>
+        <p class="lead" style="margin-top:18px">
+          Orxest is not a coding agent. It is the control plane that turns software work into
+          executable tasks, picks the right agent for every workflow step and keeps the history.
+        </p>
+        <div class="spacer"></div>
+        <div class="principle">Agents perform work. Orxest decides how work moves through the system.</div>
+        <div class="footer-meta">
+          <span>Walkthrough: new project → workflow → agents → assignments → first task</span>
+          <span class="dim">Use ← → or space to navigate · <span class="mono">f</span> for fullscreen · <span class="mono">p</span> to print</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2 ─────────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">Orientation</div><h2>The model in one picture</h2></div>
+        <div class="badge outline mono">project → … → execution</div>
+      </div>
+      <div class="pipeline" style="margin-bottom:18px">
+        <div class="node hot"><span class="k">you create</span>Project</div><span class="arrow">→</span>
+        <div class="node">Issues</div><span class="arrow">→</span>
+        <div class="node">Tasks</div><span class="arrow">→</span>
+        <div class="node hot"><span class="k">you choose</span>Workflow</div><span class="arrow">→</span>
+        <div class="node">Steps</div><span class="arrow">→</span>
+        <div class="node hot"><span class="k">you assign</span>Role</div><span class="arrow">→</span>
+        <div class="node">Agent</div><span class="arrow">→</span>
+        <div class="node">Harness</div><span class="arrow">→</span>
+        <div class="node">Model</div><span class="arrow">→</span>
+        <div class="node">Execution</div>
+      </div>
+      <div class="cols-6040">
+        <div class="stack">
+          <div class="card">
+            <div class="card-head"><span class="title">Two things people mix up</span></div>
+            <table>
+              <thead><tr><th>Concept</th><th>Scope</th><th>What it is</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Agent configuration</strong></td><td class="mono">global</td><td>harness + provider + model + reasoning + limits. Reusable everywhere.</td></tr>
+                <tr><td><strong>Assignment</strong></td><td class="mono">per project</td><td>agent × role × priority × enabled. “This agent may serve this role <em>in this project</em>.”</td></tr>
+                <tr><td><strong>Role</strong></td><td class="mono">global</td><td>architect, senior-developer, tester, reviewer, … Workflow steps require roles, never agents.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout">
+            You do not “assign a project to an agent”. The <strong>project owns the assignments</strong>:
+            the same agent can be a <span class="mono">junior-developer</span> in one project and a
+            <span class="mono">senior-developer</span> in another — with a different model if you like.
+          </div>
+        </div>
+        <div class="stack">
+          <div class="card tight">
+            <h4>The task itself has no role, agent or model</h4>
+            <p>A task moves through workflow steps; each step requires a role, and Orxest selects an
+              enabled agent for that role at that moment. That is why one task can be handled by
+              four different agents:</p>
+            <div class="pipeline" style="margin-top:10px">
+              <div class="node">architect</div><span class="arrow">→</span>
+              <div class="node">senior-developer</div><span class="arrow">→</span>
+              <div class="node">tester</div><span class="arrow">→</span>
+              <div class="node">reviewer</div>
+            </div>
+          </div>
+          <div class="card tight">
+            <h4>Shipped harnesses</h4>
+            <p><span class="badge mono">pi</span> Pi coding agent · <span class="badge mono">codex</span> Codex ·
+               <span class="badge mono">fake</span> deterministic, for trying Orxest without a model.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3 ─────────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">Before you start</div><h2>Four things you need</h2></div>
+        <div class="badge outline">≈ 5 minutes</div>
+      </div>
+      <div class="cols">
+        <div class="stack">
+          <div class="card">
+            <div class="card-head"><span class="badge info">1</span><span class="title">A running Orxest</span></div>
+            <pre><span class="c"># one binary, one SQLite file, the web console included</span>
+<span class="f">make</span> build
+./bin/orxest serve          <span class="c"># → http://127.0.0.1:8787</span></pre>
+          </div>
+          <div class="card">
+            <div class="card-head"><span class="badge info">2</span><span class="title">A Git repository (or a path for a new one)</span></div>
+            <p>An existing checkout on the Orxest host, or tick <strong>Initialise a new repository</strong>
+               and Orxest runs <span class="mono">git init</span> plus an initial commit for you.</p>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <div class="card-head"><span class="badge info">3</span><span class="title">A coding-agent CLI</span></div>
+            <p>Pi or Codex on <span class="mono">PATH</span>, authenticated, with the provider keys in the
+               environment that starts Orxest — credentials are never stored in the database.</p>
+            <pre style="margin-top:10px"><span class="f">pi</span> --list-models        <span class="c"># what Pi can use</span>
+<span class="f">pi</span> --version</pre>
+          </div>
+          <div class="card">
+            <div class="card-head"><span class="badge info">4</span><span class="title">At least one agent configuration</span></div>
+            <p>Create them on the <strong>Agents</strong> page first, or add them inline while creating the
+               project — both write the same records.</p>
+          </div>
+        </div>
+      </div>
+      <div class="callout warn" style="margin-top:16px">
+        <strong>No sandbox by default.</strong> Pi documents that its tools run with the permissions of the
+        Orxest process. For unattended runs on untrusted repositories, run Orxest inside a container or VM.
+      </div>
+    </section>
+
+    <!-- 4 ─────────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">Step 1 of 4 · Projects → New project</div><h2>Describe the project and its repository</h2></div>
+        <div class="badge outline mono">/projects/new</div>
+      </div>
+      <div class="cols-6040">
+        <div>
+          <div class="label-illus">UI layout — the real form uses exactly these fields and hints</div>
+          <div class="ui">
+            <div class="ui-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="ui-url">127.0.0.1:8787/projects/new</span></div>
+            <div class="ui-body">
+              <div class="ui-h1">New project</div>
+              <div class="ui-sub">Point Orxest at a Git repository, pick a workflow template and optionally configure the agents that will work on it.</div>
+
+              <div class="ui-card">
+                <div class="h">Project</div>
+                <div class="d">Repository coordinates and the branch finished work is integrated into.</div>
+                <div class="field"><label>Name</label><div class="input">Payments platform</div></div>
+                <div class="field"><label>Description</label><div class="textarea">What this repository is for and who owns it.</div></div>
+                <div class="grid2">
+                  <div class="field"><label>Repository path</label><div class="input mono">/srv/git/payments</div><div class="hint">Absolute path on the Orxest host.</div></div>
+                  <div class="field"><label>Repository URL</label><div class="input mono">https://github.com/org/repo.git</div><div class="hint">Optional. Used for clones and provenance.</div></div>
+                  <div class="field"><label>Target branch</label><div class="input mono">main</div><div class="hint">Finished work is merged here.</div></div>
+                  <div class="field" style="justify-content:flex-end">
+                    <div class="check"><span class="box"></span><span><strong>Initialise a new repository</strong><br /><span class="dim">Off by default — tick it when the path does not exist yet.</span></span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="row" style="justify-content:flex-end"><span class="btn ghost">Cancel</span><span class="btn primary">Create project</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <h4>What each field decides</h4>
+            <ul class="small">
+              <li><strong>Repository path</strong> — the only directory tree Orxest and its agents run in. Each task gets a worktree under <span class="mono">&lt;repo&gt;/.orxest/worktrees/</span>.</li>
+              <li><strong>Target branch</strong> — where approved task branches are merged. Orxest switches your checkout to it when integrating.</li>
+              <li><strong>Repository URL</strong> — used when the path does not exist yet and Orxest clones instead of initialising.</li>
+            </ul>
+          </div>
+          <div class="card tight">
+            <h4>After saving</h4>
+            <p class="small">Orxest prepares the repository (detecting its default branch), returns a
+              <span class="mono">repository_status</span>, and takes you to the project’s
+              <strong>Board</strong> tab. A repository problem — a path that is not a Git repository, a
+              missing URL — arrives as a <em>warning toast</em> rather than a lost project, and
+              <span class="mono">GET /api/projects/&lt;id&gt;/repository</span> re-checks it whenever you like.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 ─────────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">Step 2 of 4 · Workflow template</div><h2>The workflow decides which roles you must staff</h2></div>
+        <div class="badge outline mono">GET /api/workflow-templates</div>
+      </div>
+      <p class="lead">Pick a starting point; the project owns its workflow afterwards and you can edit every
+        step, transition and gate on the <strong>Workflow</strong> tab.</p>
+      <div class="cols-3">
+        <div class="card">
+          <div class="card-head"><span class="badge mono">minimal</span></div>
+          <p class="small">Small, low-risk changes.</p>
+          <table style="margin-top:10px">
+            <thead><tr><th>Step</th><th>Role</th></tr></thead>
+            <tbody><tr><td class="mono">implementation</td><td class="mono">developer</td></tr></tbody>
+          </table>
+          <p class="small dim" style="margin-top:8px">Staff <strong>1</strong> role.</p>
+        </div>
+        <div class="card" style="border-color:#3f3f46">
+          <div class="card-head"><span class="badge mono">standard</span><span class="badge info">default</span></div>
+          <p class="small">Architecture, implementation, testing, review.</p>
+          <table style="margin-top:10px">
+            <thead><tr><th>Step</th><th>Role</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">architecture</td><td class="mono">architect</td></tr>
+              <tr><td class="mono">implementation</td><td class="mono">developer</td></tr>
+              <tr><td class="mono">testing</td><td class="mono">tester</td></tr>
+              <tr><td class="mono">review <span class="badge purple">gate</span></td><td class="mono">reviewer</td></tr>
+            </tbody>
+          </table>
+          <p class="small dim" style="margin-top:8px">Staff <strong>4</strong> roles.</p>
+        </div>
+        <div class="card">
+          <div class="card-head"><span class="badge mono">production</span></div>
+          <p class="small">Adds a security review before approval.</p>
+          <table style="margin-top:10px">
+            <thead><tr><th>Step</th><th>Role</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">architecture</td><td class="mono">architect</td></tr>
+              <tr><td class="mono">implementation</td><td class="mono">senior-developer</td></tr>
+              <tr><td class="mono">testing</td><td class="mono">tester</td></tr>
+              <tr><td class="mono">security</td><td class="mono">security</td></tr>
+              <tr><td class="mono">review <span class="badge purple">gate</span></td><td class="mono">reviewer</td></tr>
+            </tbody>
+          </table>
+          <p class="small dim" style="margin-top:8px">Staff <strong>5</strong> roles.</p>
+        </div>
+      </div>
+      <div class="cols" style="margin-top:18px">
+        <div class="callout">
+          <strong>Read the template as a staffing list.</strong> Every step names a role. If a role has no
+          enabled agent when a task reaches that step, Orxest <em>blocks</em> the task with
+          <span class="mono">policy_failure</span> and tells you which role is missing — it never guesses.
+        </div>
+        <div class="card tight">
+          <h4>Branching is part of the template</h4>
+          <p class="small">In <span class="mono">standard</span>, failing tests send the task <em>back</em> to
+            <span class="mono">implementation</span> instead of failing it; the review step is an approval gate,
+            so a human (or the API) approves or rejects before integration.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6 ─────────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">Step 3 of 4 · Agents</div><h2>Configure the workers (globally, once)</h2></div>
+        <div class="badge outline mono">/agents · POST /api/agents</div>
+      </div>
+      <div class="cols-6040">
+        <div>
+          <div class="label-illus">Agents page — an agent configuration is harness + model + limits</div>
+          <div class="ui">
+            <div class="ui-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="ui-url">127.0.0.1:8787/agents</span></div>
+            <div class="ui-body">
+              <div class="ui-h1">Agents</div>
+              <div class="ui-sub">Reusable worker configurations. Assign them to roles per project.</div>
+              <div class="ui-card">
+                <div class="h">codex-senior <span class="badge success">enabled</span></div>
+                <div class="d"><span class="badge mono">pi</span> <span class="badge mono">gemini-2.5-pro</span> <span class="badge mono">reasoning high</span> <span class="badge mono">concurrency 1</span></div>
+                <table>
+                  <thead><tr><th>Field</th><th>Value</th></tr></thead>
+                  <tbody>
+                    <tr><td>Harness</td><td class="mono">pi</td></tr>
+                    <tr><td>Provider / model</td><td class="mono">google / gemini-2.5-pro</td></tr>
+                    <tr><td>Reasoning</td><td class="mono">high</td></tr>
+                    <tr><td>Max concurrent executions</td><td class="mono">1</td></tr>
+                    <tr><td>Timeout / retries</td><td class="mono">1800s / 0</td></tr>
+                    <tr><td>Instructions</td><td class="dim">Implement end to end, including tests.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="ui-card" style="opacity:.75">
+                <div class="h">codex-tester <span class="badge success">enabled</span></div>
+                <div class="d"><span class="badge mono">pi</span> <span class="badge mono">gemini-2.5-flash</span> <span class="badge mono">reasoning medium</span></div>
+              </div>
+              <div class="row" style="justify-content:flex-end"><span class="btn primary">New agent</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <h4>Only orchestration-relevant settings</h4>
+            <p class="small">Orxest deliberately exposes <strong>harness, provider, model, reasoning level</strong>
+              and execution limits. Inference tuning (temperature, top_p, top_k, min_p, repetition penalty)
+              belongs to the model provider and is not part of Orxest.</p>
+          </div>
+          <div class="card tight">
+            <h4>Why reasoning is a separate knob</h4>
+            <p class="small">Give <span class="mono">junior-developer</span> a cheap model with
+              <span class="mono">reasoning: low</span> and <span class="mono">senior-developer</span> a strong one with
+              <span class="mono">high</span> — the role/agent split is exactly what makes that trade-off a
+              configuration change instead of a code change.</p>
+          </div>
+          <div class="card tight">
+            <h4>Harness options stay per harness</h4>
+            <p class="small">For Pi: <span class="mono">tools</span>, <span class="mono">exclude_tools</span>,
+              <span class="mono">config_dir</span>, <span class="mono">project_trust</span>,
+              <span class="mono">sessions</span>, <span class="mono">arg:&lt;flag&gt;</span>.
+              For Codex: <span class="mono">sandbox</span>, <span class="mono">profile</span>,
+              <span class="mono">config</span>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7 ─────────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">Step 4 of 4 · the important one</div><h2>Assign agents to the project’s roles</h2></div>
+        <div class="badge outline mono">/projects/:id/agents</div>
+      </div>
+      <div class="cols-6040">
+        <div>
+          <div class="label-illus">Project → Agents tab: staff every role your workflow uses</div>
+          <div class="ui">
+            <div class="ui-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="ui-url">127.0.0.1:8787/projects/prj_…/agents</span></div>
+            <div class="ui-tabs">
+              <span class="ui-tab">Board</span><span class="ui-tab">Issues</span><span class="ui-tab">Activity</span>
+              <span class="ui-tab on">Agents</span><span class="ui-tab">Workflow</span>
+            </div>
+            <div class="ui-body">
+              <div class="ui-h1">Project agents</div>
+              <div class="ui-sub">Assignments decide which agent serves each workflow step role in this project. A role may have several agents; the highest priority enabled one is preferred.</div>
+              <table>
+                <thead><tr><th>Role</th><th>Used by step</th><th>Agents (priority)</th><th></th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><strong>Architect</strong></td><td class="mono">architecture</td>
+                    <td><span class="badge mono">pi-architect</span> <span class="badge mono">10</span></td>
+                    <td class="dim small">Edit · Remove</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Developer</strong></td><td class="mono">implementation</td>
+                    <td><span class="badge mono">pi-senior</span> <span class="badge mono">20</span>
+                        <span class="badge mono">pi-junior</span> <span class="badge mono">5</span></td>
+                    <td class="dim small">Edit · Remove</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Tester</strong></td><td class="mono">testing</td>
+                    <td><span class="badge mono">pi-tester</span> <span class="badge mono">10</span></td>
+                    <td class="dim small">Edit · Remove</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Reviewer</strong></td><td class="mono">review</td>
+                    <td><span class="badge danger">no agent — task will block</span></td>
+                    <td class="dim small">Assign agent</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="label-illus">“Assign agent” dialog</div>
+          <div class="dialog">
+            <div class="h">Assign agent</div>
+            <div class="d">An assignment makes an agent eligible for one workflow step role in this project.
+              When several agents serve a role the highest priority wins.</div>
+            <div class="field"><label>Agent</label>
+              <div class="select"><span>pi-reviewer · <span class="dim">pi · gemini-2.5-pro</span></span><span class="caret">▾</span></div>
+            </div>
+            <div class="field"><label>Role</label>
+              <div class="select"><span>Reviewer <span class="dim mono">reviewer</span></span><span class="caret">▾</span></div>
+              <div class="hint">Any other role slug can be typed in, e.g. <span class="mono">security</span>.</div>
+            </div>
+            <div class="grid2">
+              <div class="field"><label>Priority</label><div class="input">10</div></div>
+              <div class="field" style="justify-content:center">
+                <div class="check"><span class="box on">✓</span><span><strong>Enabled</strong></span></div>
+              </div>
+            </div>
+            <div class="row" style="justify-content:flex-end"><span class="btn ghost">Cancel</span><span class="btn primary">Assign agent</span></div>
+          </div>
+          <div class="callout" style="margin-top:14px">
+            This is a <strong>five-second job per role</strong>, and it is the only thing that connects a
+            workflow step to a worker. Nothing else in Orxest needs to know which agent runs a step.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8 ─────────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">Selection</div><h2>How Orxest picks the agent for a step</h2></div>
+        <div class="badge outline mono">deterministic · explainable</div>
+      </div>
+      <div class="cols-6040">
+        <div class="stack">
+          <div class="card">
+            <h4>The rules, in order</h4>
+            <table>
+              <tbody>
+                <tr><td class="mono">1</td><td>the workflow step’s <strong>role</strong></td></tr>
+                <tr><td class="mono">2</td><td>assignments for that role that are <strong>enabled</strong>, with an enabled agent</td></tr>
+                <tr><td class="mono">3</td><td>the agent’s <strong>harness is registered</strong> in this deployment</td></tr>
+                <tr><td class="mono">4</td><td>the agent has <strong>capacity</strong> (<span class="mono">max_concurrent_executions</span>)</td></tr>
+                <tr><td class="mono">5</td><td>project limit, then global limit allow another execution</td></tr>
+                <tr><td class="mono">6</td><td>highest assignment <strong>priority</strong> wins; ties break on name</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="cols" style="gap:14px">
+            <div class="card tight">
+              <h4>No agent for the role</h4>
+              <p class="small">Task → <span class="badge danger">blocked</span>
+                <span class="mono small">policy_failure</span><br />
+                “no enabled agent is configured for role <span class="mono">reviewer</span>”.<br />
+                <span class="dim">Assign one and it resumes by itself.</span></p>
+            </div>
+            <div class="card tight">
+              <h4>All agents busy</h4>
+              <p class="small">The task stays <span class="badge info">ready</span> and waits for the next
+                scheduler tick — a temporary condition, not a failure.</p>
+            </div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <h4>What you see in the log</h4>
+            <pre><span class="c"># every dispatch records the decision</span>
+task dispatched   task_id=tsk_…  step=implementation
+                  role=developer agent=pi-senior
+                  harness=pi model=gemini-2.5-pro reasoning=high</pre>
+          </div>
+          <div class="card tight">
+            <h4>Human override, always available</h4>
+            <ul class="small">
+              <li><strong>Reassign</strong> — point the next execution at a specific agent.</li>
+              <li><strong>Move</strong> — send the task to another workflow step.</li>
+              <li><strong>Retry</strong> — new execution, previous ones preserved.</li>
+              <li><strong>Approve / Reject</strong> — at an approval gate, so review is a real gate.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9 ─────────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">After creation</div><h2>What the board shows you</h2></div>
+        <div class="badge outline mono">/projects/:id/board</div>
+      </div>
+      <div class="cols-6040">
+        <div>
+          <div class="label-illus">Board — orchestration state, not a task store you have to curate</div>
+          <div class="ui">
+            <div class="ui-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="ui-url">127.0.0.1:8787/projects/prj_…/board</span></div>
+            <div class="ui-body">
+              <div class="ui-h1">Payments platform</div>
+              <div class="ui-sub">4 issues · 9 tasks · 2 running · max concurrent 2 · auto integrate on</div>
+              <div class="grid3">
+                <div class="ui-card" style="margin:0">
+                  <div class="h">Backlog <span class="dim">3</span></div>
+                  <div class="d">Add webhook retries</div>
+                  <div class="d">Rotate signing keys</div>
+                </div>
+                <div class="ui-card" style="margin:0">
+                  <div class="h">In Progress <span class="dim">2</span></div>
+                  <div class="d">Implement user model<br /><span class="badge mono">implementation</span> <span class="badge mono">pi-senior</span></div>
+                  <div class="d">Add authentication tests<br /><span class="badge mono">testing</span> <span class="badge mono">pi-tester</span></div>
+                </div>
+                <div class="ui-card" style="margin:0">
+                  <div class="h">Review <span class="dim">1</span></div>
+                  <div class="d">Implement JWT auth<br /><span class="badge purple">awaiting approval</span></div>
+                </div>
+              </div>
+              <div class="ui-card" style="margin-top:12px">
+                <div class="h">Activity <span class="badge success">live</span></div>
+                <div class="d mono">task.started → implementation · pi-senior</div>
+                <div class="d mono">execution.output → “Running tests…”</div>
+                <div class="d mono">task.review → needs a human decision</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <h4>What you get for free per task</h4>
+            <ul class="small">
+              <li>an isolated worktree and branch <span class="mono">orxest/task/&lt;id&gt;</span></li>
+              <li>live streamed output and a raw JSONL harness log</li>
+              <li>append-only execution history with the agent, model and outcome of every attempt</li>
+              <li>token and cost metrics reported by the harness</li>
+              <li>rework loops, retries and a merge into the target branch on approval</li>
+            </ul>
+          </div>
+          <div class="card tight">
+            <h4>Where to look when something is stuck</h4>
+            <p class="small">Task view → status, current step, current agent, blocked reason, failure kind,
+              dependency statuses and the full execution history. Every state change carries a timestamp.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10 ────────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">The same thing without the UI</div><h2>Create a project and assign agents over the API</h2></div>
+        <div class="badge outline mono">REST · SSE · OpenAPI</div>
+      </div>
+      <div class="cols">
+        <div class="stack">
+          <div class="filename">1 · create an agent configuration (reusable)</div>
+          <pre><span class="f">curl</span> -s localhost:8787/api/agents \
+  -H <span class="s">'content-type: application/json'</span> -d <span class="s">'{
+    "name": "pi-senior",
+    "harness": "pi",
+    "provider": "google",
+    "model": "gemini-2.5-pro",
+    "reasoning": "high",
+    "max_concurrent_executions": 1,
+    "instructions": "Implement end to end, including tests."
+  }'</span></pre>
+          <div class="filename">2 · create the project, staffing roles inline</div>
+          <pre><span class="f">curl</span> -s localhost:8787/api/projects \
+  -H <span class="s">'content-type: application/json'</span> -d <span class="s">'{
+    "name": "Payments platform",
+    "repository_path": "/srv/git/payments",
+    "target_branch": "main",
+    "workflow_template": "standard",
+    "agents": [
+      {"name": "pi-architect", "harness": "pi", "model": "gemini-2.5-pro",
+       "reasoning": "medium", "role": "architect",      "priority": 10},
+      {"name": "pi-senior",    "harness": "pi", "model": "gemini-2.5-pro",
+       "reasoning": "high",   "role": "developer",      "priority": 20},
+      {"name": "pi-tester",    "harness": "pi", "model": "gemini-2.5-flash",
+       "reasoning": "medium", "role": "tester",         "priority": 10},
+      {"name": "pi-reviewer",  "harness": "pi", "model": "gemini-2.5-pro",
+       "reasoning": "high",   "role": "reviewer",       "priority": 10}
+    ]
+  }'</span></pre>
+        </div>
+        <div class="stack">
+          <div class="filename">3 · assign an agent to a role on an existing project</div>
+          <pre><span class="f">curl</span> -s localhost:8787/api/projects/<span class="n">$PID</span>/agents \
+  -H <span class="s">'content-type: application/json'</span> -d <span class="s">'{
+    "agent_id": "agt_…",
+    "role_id":  "reviewer",
+    "priority": 10,
+    "enabled":  true
+  }'</span></pre>
+          <div class="card tight">
+            <h4>Related endpoints</h4>
+            <table>
+              <tbody>
+                <tr><td class="mono">GET</td><td class="mono">/api/projects/{id}/agents</td></tr>
+                <tr><td class="mono">PATCH</td><td class="mono">/api/projects/{id}/agents/{assignmentId}</td></tr>
+                <tr><td class="mono">DELETE</td><td class="mono">/api/projects/{id}/agents/{assignmentId}</td></tr>
+                <tr><td class="mono">POST</td><td class="mono">/api/projects/import</td></tr>
+                <tr><td class="mono">GET</td><td class="mono">/api/openapi.json</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="filename">or · declare it in YAML and import the whole project</div>
+          <pre><span class="c"># examples/project-pi.yaml</span>
+<span class="k">assignments</span>:
+  - <span class="k">agent</span>: pi-senior
+    <span class="k">role</span>: senior-developer
+    <span class="k">priority</span>: 10
+  - <span class="k">agent</span>: pi-reviewer
+    <span class="k">role</span>: reviewer</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- 11 ────────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">Reference</div><h2>Everything you can set, in one place</h2></div>
+        <div class="badge outline mono">cheat sheet</div>
+      </div>
+      <div class="cols-3">
+        <div class="card">
+          <h4>Built-in roles</h4>
+          <p class="small mono" style="line-height:1.9">
+            architect<br />senior-developer<br />junior-developer<br />developer<br />tester<br />reviewer<br />security
+          </p>
+          <p class="small dim">Roles are reusable and independent from models. Add your own with any slug
+            (<span class="mono">POST /api/roles</span>) and use it in a workflow step and an assignment.</p>
+        </div>
+        <div class="card">
+          <h4>Agent fields</h4>
+          <table>
+            <tbody>
+              <tr><td class="mono">name</td><td class="small">unique, e.g. <span class="mono">pi-senior</span></td></tr>
+              <tr><td class="mono">harness</td><td class="small">pi · codex · fake</td></tr>
+              <tr><td class="mono">provider</td><td class="small">e.g. google, anthropic</td></tr>
+              <tr><td class="mono">model</td><td class="small">model id or pattern</td></tr>
+              <tr><td class="mono">reasoning</td><td class="small">none…high</td></tr>
+              <tr><td class="mono">instructions</td><td class="small">prepended to every prompt</td></tr>
+              <tr><td class="mono">harness_options</td><td class="small">per-harness settings</td></tr>
+              <tr><td class="mono">max_concurrent_executions</td><td class="small">default 1</td></tr>
+              <tr><td class="mono">timeout_seconds</td><td class="small">per execution</td></tr>
+              <tr><td class="mono">enabled</td><td class="small">disabled agents are never selected</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h4>Assignment fields</h4>
+          <table>
+            <tbody>
+              <tr><td class="mono">agent_id</td><td class="small">which worker</td></tr>
+              <tr><td class="mono">role_id</td><td class="small">which workflow role</td></tr>
+              <tr><td class="mono">priority</td><td class="small">higher wins when several match</td></tr>
+              <tr><td class="mono">enabled</td><td class="small">turn a worker off without deleting it</td></tr>
+            </tbody>
+          </table>
+          <h4 style="margin-top:14px">Project settings (defaults)</h4>
+          <table>
+            <tbody>
+              <tr><td class="mono">max_concurrent_executions</td><td class="mono">2</td></tr>
+              <tr><td class="mono">default_max_attempts</td><td class="mono">3</td></tr>
+              <tr><td class="mono">auto_integrate</td><td class="mono">true</td></tr>
+              <tr><td class="mono">commit_agent_changes</td><td class="mono">true</td></tr>
+              <tr><td class="mono">require_clean_worktree</td><td class="mono">true</td></tr>
+              <tr><td class="mono">keep_worktrees</td><td class="mono">false</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:16px">
+        Deeper reading: <span class="mono">docs/configuration.md</span> (server, agent and project files) ·
+        <span class="mono">docs/operations.md</span> (running it, troubleshooting) ·
+        <span class="mono">docs/architecture.md</span> (how the flags and the engine fit together) ·
+        <span class="mono">examples/project-pi.yaml</span> and <span class="mono">examples/project.yaml</span>.
+      </div>
+    </section>
+
+    <!-- 12 ────────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="hero">
+        <div class="kicker">Recap</div>
+        <div class="rule"></div>
+        <h1 style="font-size:38px">New project in four moves</h1>
+        <div class="cols" style="margin-top:18px">
+          <div class="stack">
+            <div class="card tight">
+              <h4><span class="step-no">1</span>Create the project</h4>
+              <p class="small">Name it, point it at a repository path, choose the target branch. Or start a
+                brand-new repository from the same form.</p>
+            </div>
+            <div class="card tight">
+              <h4><span class="step-no">2</span>Pick the workflow template</h4>
+              <p class="small">The template tells you exactly which roles must be staffed —
+                <span class="mono">minimal</span>, <span class="mono">standard</span> or
+                <span class="mono">production</span> to begin with.</p>
+            </div>
+          </div>
+          <div class="stack">
+            <div class="card tight">
+              <h4><span class="step-no">3</span>Configure agents</h4>
+              <p class="small">Globally on <strong>Agents</strong>, or inline in the creation form: harness,
+                model, reasoning, limits. Reuse the same configuration across projects.</p>
+            </div>
+            <div class="card tight">
+              <h4><span class="step-no">4</span>Assign them to the project’s roles</h4>
+              <p class="small">Project → <strong>Agents</strong> tab. One assignment per role (or several with
+                priorities). That is the link between a workflow step and a worker.</p>
+            </div>
+          </div>
+        </div>
+        <div class="principle" style="margin-top:26px">Agents perform work. Orxest decides how work moves through the system.</div>
+        <div class="footer-meta">
+          <span>Orxest · project-centric orchestration platform</span>
+          <span class="dim">This deck is <span class="mono">docs/orxest-presentation.html</span> — open it in a browser, or press <span class="mono">p</span> to print/PDF.</span>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <div id="bar">
+    <button class="navbtn" id="prev" aria-label="Previous slide">‹</button>
+    <span id="counter">1 / 12</span>
+    <button class="navbtn" id="next" aria-label="Next slide">›</button>
+    <span class="grow"></span>
+    <span id="hint">← → / space · <span class="mono">f</span> fullscreen · <span class="mono">p</span> print · <span class="mono">Home/End</span></span>
+    <div id="nav" role="tablist" aria-label="Slides"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var index = 0;
+  var counter = document.getElementById('counter');
+  var progress = document.getElementById('progress');
+  var nav = document.getElementById('nav');
+  var prev = document.getElementById('prev');
+  var next = document.getElementById('next');
+
+  slides.forEach(function (_, i) {
+    var b = document.createElement('button');
+    b.title = 'Slide ' + (i + 1);
+    b.addEventListener('click', function () { show(i); });
+    nav.appendChild(b);
+  });
+  var dots = Array.prototype.slice.call(nav.children);
+
+  function show(i) {
+    index = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach(function (s, n) { s.classList.toggle('active', n === index); });
+    dots.forEach(function (d, n) { d.classList.toggle('on', n === index); });
+    counter.textContent = (index + 1) + ' / ' + slides.length;
+    progress.style.width = ((index + 1) / slides.length * 100) + '%';
+    prev.disabled = index === 0;
+    next.disabled = index === slides.length - 1;
+    slides[index].scrollTop = 0;
+    if (location.hash !== '#s' + (index + 1)) history.replaceState(null, '', '#s' + (index + 1));
+  }
+
+  // Deep links: opening the file with #s3 jumps to a slide.
+  var fromHash = parseInt((location.hash || '').replace('#s', ''), 10);
+  show(isNaN(fromHash) ? 0 : fromHash - 1);
+
+  document.addEventListener('keydown', function (e) {
+    switch (e.key) {
+      case 'ArrowRight': case 'PageDown': case ' ': case 'Enter':
+        show(index + 1); e.preventDefault(); break;
+      case 'ArrowLeft': case 'PageUp': case 'Backspace':
+        show(index - 1); e.preventDefault(); break;
+      case 'Home': show(0); e.preventDefault(); break;
+      case 'End': show(slides.length - 1); e.preventDefault(); break;
+      case 'f': case 'F':
+        if (document.fullscreenElement) document.exitFullscreen();
+        else document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+        e.preventDefault(); break;
+      case 'p': case 'P':
+        window.print(); e.preventDefault(); break;
+    }
+  });
+  prev.addEventListener('click', function () { show(index - 1); });
+  next.addEventListener('click', function () { show(index + 1); });
+
+  // Click the left/right third of a slide to navigate (ignores clicks on links).
+  document.getElementById('stage').addEventListener('click', function (e) {
+    if (e.target.closest('a, pre, .btn')) return;
+    var x = e.clientX - this.getBoundingClientRect().left;
+    var w = this.getBoundingClientRect().width;
+    if (x > w * 0.72) show(index + 1);
+    else if (x < w * 0.12) show(index - 1);
+  });
+
+  // Touch swipe for presenting from a tablet.
+  var startX = null;
+  document.addEventListener('touchstart', function (e) { startX = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener('touchend', function (e) {
+    if (startX === null) return;
+    var dx = e.changedTouches[0].clientX - startX;
+    if (Math.abs(dx) > 60) show(index + (dx < 0 ? 1 : -1));
+    startX = null;
+  }, { passive: true });
+})();
+</script>
+</body>
+</html>

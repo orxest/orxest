@@ -1,5 +1,14 @@
 import { useMutationState } from '@tanstack/react-query'
-import { ExternalLink, GitBranch, Layers, Timer, TriangleAlert, UserCog, Workflow } from 'lucide-react'
+import {
+  ExternalLink,
+  GitBranch,
+  Layers,
+  Link2,
+  Timer,
+  TriangleAlert,
+  UserCog,
+  Workflow,
+} from 'lucide-react'
 import * as React from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
@@ -9,7 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Hint } from '@/components/ui/tooltip'
 import { TaskActionsMenu } from '@/features/board/TaskActionsMenu'
-import { truncate } from '@/lib/format'
+import { roleLabel, truncate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { BoardResponse, Task } from '@/types'
 
@@ -84,6 +93,39 @@ export function TaskCard({
     [board.agents, task.preferred_agent_id],
   )
 
+  const currentStep = stepIndex >= 0 ? workflow?.steps[stepIndex] : undefined
+  const roleId = currentStep?.role
+  const roleName = React.useMemo(() => {
+    if (!roleId) return undefined
+    return (
+      board.agents.find((assignment) => assignment.role_id === roleId)?.role.name ?? roleLabel(roleId)
+    )
+  }, [board.agents, roleId])
+
+  // The board response carries the full dependency map; resolve each edge to the
+  // task it points at so the card can say what it is waiting for.
+  const dependencies = React.useMemo(() => {
+    const edges = board.dependencies?.[task.id] ?? []
+    if (edges.length === 0) return []
+    const byId = new Map<string, Task>()
+    for (const column of board.columns) {
+      for (const boardTask of column.tasks) byId.set(boardTask.id, boardTask)
+    }
+    return edges.map((id) => {
+      const dependency = byId.get(id)
+      return {
+        id,
+        title: dependency?.title ?? id,
+        status: dependency?.status,
+        done: dependency?.status === 'done',
+      }
+    })
+  }, [board.columns, board.dependencies, task.id])
+  const openDependencies = dependencies.filter((dependency) => !dependency.done)
+  const dependencySummary = dependencies
+    .map((dependency) => `${dependency.title} (${dependency.status ?? 'unknown'})`)
+    .join(', ')
+
   const labels = task.labels ?? []
   const visibleLabels = labels.slice(0, 3)
   const extraLabels = labels.length - visibleLabels.length
@@ -120,6 +162,18 @@ export function TaskCard({
           </Badge>
         ) : null}
         <FailureKindBadge kind={task.failure_kind} />
+        {dependencies.length > 0 ? (
+          <Hint label={`Depends on: ${dependencySummary}`}>
+            <span className="inline-flex">
+              <Badge variant={openDependencies.length > 0 ? 'warning' : 'muted'}>
+                <Link2 className="size-3" />
+                {openDependencies.length > 0
+                  ? `${openDependencies.length} blocker${openDependencies.length === 1 ? '' : 's'}`
+                  : `${dependencies.length} dep${dependencies.length === 1 ? '' : 's'}`}
+              </Badge>
+            </span>
+          </Hint>
+        ) : null}
       </div>
 
       {issueTitle ? (
@@ -147,10 +201,23 @@ export function TaskCard({
         </span>
       </div>
 
-      {task.blocked_reason ? (
+      {roleId ? (
+        <p
+          className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground"
+          title={`Required role: ${roleName ?? roleId}`}
+        >
+          <UserCog className="size-3 shrink-0" />
+          <span className="truncate">role: {roleName ?? roleId}</span>
+        </p>
+      ) : null}
+
+      {task.blocked_reason || (task.status === 'blocked' && openDependencies.length > 0) ? (
         <p className="flex items-start gap-1.5 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-1 text-[11px] text-amber-700 dark:text-amber-400">
           <TriangleAlert className="mt-px size-3 shrink-0" />
-          <span className="line-clamp-2">{task.blocked_reason}</span>
+          <span className="line-clamp-2">
+            {task.blocked_reason ||
+              `Waiting for ${openDependencies.map((dependency) => dependency.title).join(', ')}`}
+          </span>
         </p>
       ) : null}
 
@@ -185,16 +252,22 @@ export function TaskCard({
       ) : null}
 
       {preferredAgent ? (
-        <Hint label={`Preferred agent: ${preferredAgent.name}`}>
+        <Hint
+          label={`Preferred agent (a scheduling hint, not necessarily the agent running this task): ${preferredAgent.name}`}
+        >
           <span className="inline-flex w-fit items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
             <UserCog className="size-3" />
+            <span className="text-muted-foreground/80">preferred</span>
             {preferredAgent.display_name || preferredAgent.name}
           </span>
         </Hint>
       ) : task.preferred_agent_id ? (
-        <Hint label={`Preferred agent id: ${task.preferred_agent_id}`}>
+        <Hint
+          label={`Preferred agent id (a scheduling hint, not necessarily the agent running this task): ${task.preferred_agent_id}`}
+        >
           <span className="inline-flex w-fit items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
             <UserCog className="size-3" />
+            <span className="font-sans text-muted-foreground/80">preferred</span>
             {task.preferred_agent_id}
           </span>
         </Hint>

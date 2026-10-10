@@ -174,7 +174,7 @@ export function IssuesPage() {
             </Button>
             <Button onClick={() => setDecomposeOpen(true)}>
               <Sparkles className="size-3.5" />
-              Decompose with architect
+              Plan work with architect
             </Button>
           </>
         }
@@ -276,7 +276,7 @@ export function IssuesPage() {
               </Button>
               <Button onClick={() => setDecomposeOpen(true)}>
                 <Sparkles className="size-3.5" />
-                Decompose with architect
+                Plan work with architect
               </Button>
             </>
           }
@@ -314,6 +314,7 @@ export function IssuesPage() {
       <DecomposeDialog
         projectId={projectId}
         agents={agents}
+        autoAcceptPlans={board.data?.project.settings.auto_accept_plans ?? false}
         open={decomposeOpen}
         onOpenChange={setDecomposeOpen}
       />

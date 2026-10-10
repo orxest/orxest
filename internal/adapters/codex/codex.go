@@ -67,7 +67,10 @@ type Harness struct {
 	log  *slog.Logger
 }
 
-var _ ports.Harness = (*Harness)(nil)
+var (
+	_ ports.Harness      = (*Harness)(nil)
+	_ ports.ArgvReporter = (*handle)(nil)
+)
 
 // New creates a Codex harness.
 func New(opts Options) *Harness {
@@ -192,6 +195,7 @@ func (h *Harness) Start(ctx context.Context, req ports.ExecutionRequest) (ports.
 		lastMessagePath: lastMessagePath,
 		logPath:         stdoutPath,
 		grace:           h.opts.GracePeriod,
+		argv:            childproc.RedactArgs(append([]string{binary}, args...)),
 		log:             h.log.With(slog.String("execution_id", req.ExecutionID)),
 	}
 	h.log.InfoContext(ctx, "codex execution started",
@@ -321,7 +325,9 @@ type handle struct {
 	lastMessagePath string
 	logPath         string
 	grace           time.Duration
-	log             *slog.Logger
+	// argv is the credential-redacted command line, exposed for observability.
+	argv []string
+	log  *slog.Logger
 
 	mu          sync.Mutex
 	result      domain.ExecutionResult
@@ -335,6 +341,10 @@ type handle struct {
 func (h *handle) ID() string { return h.id }
 
 func (h *handle) Events() <-chan ports.Event { return h.events }
+
+// Argv implements ports.ArgvReporter. Secrets are redacted by childproc, so the
+// command line can be recorded on the execution without leaking credentials.
+func (h *handle) Argv() []string { return h.argv }
 
 // consume reads a child stream line by line, emits events and appends to a log
 // file. Codex stdout is JSONL; stderr is plain text.

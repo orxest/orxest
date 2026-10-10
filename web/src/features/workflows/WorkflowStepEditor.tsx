@@ -4,11 +4,14 @@ import {
   ArrowUp,
   CheckSquare,
   Copy,
+  Plus,
   Trash2,
 } from 'lucide-react'
 import * as React from 'react'
 
+import { PromptDialog } from '@/components/common/ConfirmDialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CheckboxField } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -28,9 +31,19 @@ import {
   transitionDefaultLabel,
   type EditableStep,
 } from '@/features/workflows/workflowModel'
-import type { Role } from '@/types'
+import { useAgentActions } from '@/hooks/mutations'
+import { roleLabel } from '@/lib/format'
+import type { Role, RoleStaffing } from '@/types'
 
 const ROLE_SLUG = /^[a-z0-9._-]+$/
+
+function slugifyRole(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^[-._]+|[-._]+$/g, '')
+}
 
 /**
  * One editable workflow step. Presented as a card so reordering, duplicating and
@@ -41,6 +54,7 @@ export function WorkflowStepEditor({
   index,
   total,
   roles,
+  staffing,
   stepNames,
   problems,
   onPatch,
@@ -54,6 +68,8 @@ export function WorkflowStepEditor({
   index: number
   total: number
   roles: Role[]
+  /** Whether the step's role can be staffed in this project right now. */
+  staffing?: RoleStaffing
   stepNames: string[]
   problems: string[]
   onPatch: (patch: Partial<EditableStep>) => void
@@ -64,10 +80,35 @@ export function WorkflowStepEditor({
   /** Resolves a transition target against the whole draft, for the inline preview. */
   resolveLabel: (target: string) => string
 }) {
+  const createRole = useAgentActions().createRole
   const knownRole = step.role !== '' && roles.some((role) => role.id === step.role)
-  const [customRole, setCustomRole] = React.useState(() => step.role !== '' && !knownRole)
-  const showCustomRole = customRole || roles.length === 0
   const roleIsValid = ROLE_SLUG.test(step.role.trim())
+  const availableNames = (staffing?.candidates ?? [])
+    .filter((candidate) => candidate.available)
+    .map((candidate) => candidate.agent_name)
+
+  const [createOpen, setCreateOpen] = React.useState(false)
+  const [newRoleId, setNewRoleId] = React.useState('')
+
+  const openCreateRole = () => {
+    setNewRoleId(slugifyRole(step.role || step.name))
+    createRole.reset()
+    setCreateOpen(true)
+  }
+
+  const submitRole = () => {
+    const id = slugifyRole(newRoleId)
+    if (!id) return
+    createRole.mutate(
+      { id, name: roleLabel(id) },
+      {
+        onSuccess: () => {
+          onPatch({ role: id })
+          setCreateOpen(false)
+        },
+      },
+    )
+  }
 
   return (
     <div className="rounded-lg border border-l-2 border-border border-l-primary/60 bg-card">
@@ -84,6 +125,12 @@ export function WorkflowStepEditor({
         <span className="text-[11px] text-muted-foreground">
           lowercase slug suggested, e.g. <span className="font-mono">implementation</span>
         </span>
+        {staffing?.reason ? (
+          <Badge variant="warning" title={staffing.reason}>
+            <AlertTriangle className="size-3" />
+            unstaffable
+          </Badge>
+        ) : null}
         <div className="ml-auto flex items-center gap-1">
           <Hint label="Move up">
             <Button
@@ -153,30 +200,24 @@ export function WorkflowStepEditor({
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between gap-2">
               <Label htmlFor={`step-${index}-role`}>Role</Label>
-              <Button
-                variant="link"
-                size="xs"
-                disabled={roles.length === 0}
-                onClick={() => {
-                  setCustomRole((current) => !current)
-                  onPatch({ role: '' })
-                }}
-              >
-                {showCustomRole ? 'Pick a known role' : 'Use a custom slug'}
+              <Button variant="link" size="xs" onClick={openCreateRole}>
+                <Plus className="size-3" />
+                Create role…
               </Button>
             </div>
-            {showCustomRole ? (
+            {roles.length === 0 ? (
               <Input
                 id={`step-${index}-role`}
                 value={step.role}
                 placeholder="developer"
                 className="font-mono text-[11px]"
+                aria-describedby={`step-${index}-role-help`}
                 onChange={(event) => onPatch({ role: event.target.value.trim().toLowerCase() })}
               />
             ) : (
               <Select value={step.role} onValueChange={(value) => onPatch({ role: value })}>
-                <SelectTrigger id={`step-${index}-role`}>
-                  <SelectValue placeholder="Select a role" />
+                <SelectTrigger id={`step-${index}-role`} aria-describedby={`step-${index}-role-help`}>
+                  <SelectValue placeholder="Select an existing role" />
                 </SelectTrigger>
                 <SelectContent>
                   {roles.map((role) => (
@@ -196,8 +237,44 @@ export function WorkflowStepEditor({
               </Select>
             )}
             {step.role.length > 0 && !roleIsValid ? (
-              <p className="text-[11px] text-destructive">
+              <p id={`step-${index}-role-help`} className="text-[11px] text-destructive">
                 Role must be a lowercase slug (a-z, 0-9, ., _, -).
+              </p>
+            ) : step.role.length > 0 && roles.length > 0 && !knownRole ? (
+              <p id={`step-${index}-role-help`} className="text-[11px] text-destructive">
+                “{step.role}” is not an existing role. Pick one from the list or create it
+                explicitly.
+              </p>
+            ) : (
+              <p id={`step-${index}-role-help`} className="text-[11px] text-muted-foreground">
+                {roles.length === 0
+                  ? 'The server reported no role catalogue; type a role id slug and create it explicitly.'
+                  : 'Typing a value does not create a role; use “Create role…” for that.'}
+              </p>
+            )}
+
+            {staffing ? (
+              staffing.reason ? (
+                <p className="flex items-start gap-1.5 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-1 text-[11px] text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="mt-px size-3 shrink-0" />
+                  <span>
+                    <span className="font-medium">Cannot be staffed.</span> {staffing.reason}
+                  </span>
+                </p>
+              ) : availableNames.length > 0 ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Staffed by {availableNames.join(', ')}.
+                </p>
+              ) : (
+                <p className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="size-3 shrink-0" />
+                  No selectable agent for this role.
+                </p>
+              )
+            ) : step.role.length > 0 && roles.length > 0 && !knownRole ? (
+              <p className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="size-3 shrink-0" />
+                Unknown role, so staffing cannot be checked.
               </p>
             ) : null}
           </div>
@@ -308,6 +385,23 @@ export function WorkflowStepEditor({
           </div>
         </div>
       </div>
+
+      <PromptDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        title={`Create role for step ${index + 1}`}
+        description="Creates a role in the catalogue and points this step at it. Role ids are lowercase slugs."
+        label="Role id"
+        placeholder="senior-developer"
+        value={newRoleId}
+        onValueChange={setNewRoleId}
+        confirmLabel="Create role"
+        required
+        pending={createRole.isPending}
+        error={createRole.error}
+        multiline={false}
+        onSubmit={submitRole}
+      />
     </div>
   )
 }

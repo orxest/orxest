@@ -46,6 +46,10 @@ type metaResponse struct {
 	Decision   decisionMeta              `json:"decision"`
 	Limits     limitsMeta                `json:"limits"`
 	EventTypes []string                  `json:"event_types"`
+	// TaskStatuses and TaskTransitions publish the authoritative task state
+	// machine so clients never have to mirror it (and never drift from it).
+	TaskStatuses    []domain.TaskStatus                       `json:"task_statuses"`
+	TaskTransitions map[domain.TaskStatus][]domain.TaskStatus `json:"task_transitions"`
 }
 
 type decisionMeta struct {
@@ -84,7 +88,9 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 			ExecutionTimeoutSeconds:       int(s.cfg.Orchestration.ExecutionTimeout.Seconds()),
 			PollIntervalMillis:            int(s.cfg.Orchestration.PollInterval.Milliseconds()),
 		},
-		EventTypes: eventTypes(),
+		EventTypes:      eventTypes(),
+		TaskStatuses:    domain.AllTaskStatuses(),
+		TaskTransitions: domain.TaskTransitions(),
 	})
 }
 
@@ -96,6 +102,7 @@ func eventTypes() []string {
 		domain.EventTaskQueued, domain.EventTaskStarted, domain.EventTaskProgress,
 		domain.EventTaskCompleted, domain.EventTaskFailed, domain.EventTaskBlocked,
 		domain.EventTaskRework, domain.EventTaskCancelled, domain.EventTaskReview,
+		domain.EventTaskIntegrationPending,
 		domain.EventExecutionStarted, domain.EventExecutionOutput,
 		domain.EventExecutionCompleted, domain.EventExecutionFailed,
 		domain.EventAgentAvailable, domain.EventAgentBusy,

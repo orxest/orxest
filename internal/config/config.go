@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -27,6 +28,11 @@ type Config struct {
 type Server struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
+	// AllowRemote must be set explicitly before Orxest will bind to a
+	// non-loopback address. Orxest launches code-editing agents and has no
+	// built-in authentication, so a remote listener must sit behind an
+	// authenticating reverse proxy (spec §49).
+	AllowRemote bool `yaml:"allow_remote"`
 	// BasePath prefixes every route, which is useful behind a reverse proxy.
 	BasePath string `yaml:"base_path"`
 	// DevCORSOrigins allows browser access from a Vite dev server.
@@ -35,6 +41,19 @@ type Server struct {
 
 // Address is the listen address.
 func (s Server) Address() string { return fmt.Sprintf("%s:%d", s.Host, s.Port) }
+
+// Loopback reports whether the configured host only accepts local connections.
+func (s Server) Loopback() bool {
+	host := strings.TrimSpace(s.Host)
+	switch host {
+	case "", "localhost", "127.0.0.1", "::1", "[::1]":
+		return true
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
 
 // Database configures SQLite.
 type Database struct {
@@ -218,6 +237,13 @@ func applyEnv(cfg *Config) error {
 	if v := os.Getenv("ORXEST_HOST"); v != "" {
 		cfg.Server.Host = v
 	}
+	if v := os.Getenv("ORXEST_ALLOW_REMOTE"); v != "" {
+		allow, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("config: ORXEST_ALLOW_REMOTE: %w", err)
+		}
+		cfg.Server.AllowRemote = allow
+	}
 	if v := os.Getenv("ORXEST_PORT"); v != "" {
 		p, err := strconv.Atoi(v)
 		if err != nil {
@@ -275,6 +301,15 @@ func applyEnv(cfg *Config) error {
 func (c *Config) Validate() error {
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("config: server.port must be between 1 and 65535")
+	}
+	// Orxest runs code-editing agents and ships without authentication, so a
+	// remote listener must be an explicit decision, not an accident of an
+	// empty or wildcard host.
+	if !c.Server.Loopback() && !c.Server.AllowRemote {
+		return fmt.Errorf("config: server.host %q is not a loopback address; set server.allow_remote: true (and put Orxest behind an authenticating reverse proxy) to bind remotely", c.Server.Host)
+	}
+	if c.Server.AllowRemote && c.Server.Loopback() {
+		return fmt.Errorf("config: server.allow_remote is set but server.host %q is already loopback", c.Server.Host)
 	}
 	if strings.TrimSpace(c.Database.Path) == "" {
 		return fmt.Errorf("config: database.path must not be empty")

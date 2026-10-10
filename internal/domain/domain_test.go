@@ -18,6 +18,9 @@ func TestTaskStateMachine(t *testing.T) {
 		{domain.TaskRunning, domain.TaskReady}, // rework
 		{domain.TaskFailed, domain.TaskReady},  // retry
 		{domain.TaskBlocked, domain.TaskReady},
+		{domain.TaskBlocked, domain.TaskDone},               // integration conflict resolved
+		{domain.TaskBlocked, domain.TaskIntegrationPending}, // retrying a resolved integration
+		{domain.TaskIntegrationPending, domain.TaskDone},
 		{domain.TaskRunning, domain.TaskCancelled},
 		{domain.TaskDone, domain.TaskReady}, // explicit reopen by a human
 	}
@@ -33,6 +36,7 @@ func TestTaskStateMachine(t *testing.T) {
 		{domain.TaskDone, domain.TaskRunning},
 		{domain.TaskCancelled, domain.TaskRunning},
 		{domain.TaskReview, domain.TaskRunning},
+		{domain.TaskIntegrationPending, domain.TaskRunning},
 		{domain.TaskBacklog, domain.TaskReview},
 	}
 	for _, tc := range denied {
@@ -174,6 +178,22 @@ func TestArchitectPlanValidation(t *testing.T) {
 	}
 	if err := domain.ValidateArchitectPlan(nil); err == nil {
 		t.Error("expected a nil plan to be rejected")
+	}
+
+	// Agents frequently label plan tasks `id` or `key`; that is normalised to
+	// `ref` instead of failing the whole plan over naming.
+	aliased := domain.ArchitectPlan{
+		Issue: domain.ArchitectIssue{Title: "Aliased", Description: "d"},
+		Tasks: []domain.ArchitectTask{
+			{ID: "TASK-001", Title: "first", Description: "d", AcceptanceCriteria: "ac"},
+			{Key: "TASK-002", Title: "second", Description: "d", AcceptanceCriteria: "ac", DependsOn: []string{"TASK-001"}},
+		},
+	}
+	if err := domain.ValidateArchitectPlan(&aliased); err != nil {
+		t.Fatalf("expected id/key aliases to normalise into ref: %v", err)
+	}
+	if aliased.Tasks[0].Ref != "TASK-001" || aliased.Tasks[1].Ref != "TASK-002" {
+		t.Errorf("expected refs to be filled from the aliases, got %q / %q", aliased.Tasks[0].Ref, aliased.Tasks[1].Ref)
 	}
 	// The generated JSON Schema advertises the same requirements.
 	schema := domain.ArchitectPlanSchema()

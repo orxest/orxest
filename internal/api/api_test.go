@@ -239,8 +239,14 @@ func TestProjectWorkflowThroughTheHTTPAPI(t *testing.T) {
 	if !bundle.RepositoryStatus.OK {
 		t.Fatalf("repository is not ready: %+v", bundle.RepositoryStatus)
 	}
-	if len(bundle.Workflow.Steps) != 4 {
-		t.Fatalf("expected the standard workflow to have 4 steps, got %d", len(bundle.Workflow.Steps))
+	if len(bundle.Workflow.Steps) != 3 {
+		t.Fatalf("expected the standard workflow to have 3 steps, got %d", len(bundle.Workflow.Steps))
+	}
+	if bundle.Workflow.Steps[0].Name != "implementation" || bundle.Workflow.Steps[2].Name != "review" {
+		t.Fatalf("unexpected standard workflow %+v", bundle.Workflow.Steps)
+	}
+	if !bundle.Workflow.Steps[2].ApprovalGate {
+		t.Errorf("expected the review step to carry the human approval gate")
 	}
 	if len(bundle.Agents) != 4 {
 		t.Fatalf("expected 4 project agents, got %d", len(bundle.Agents))
@@ -333,8 +339,8 @@ func TestProjectWorkflowThroughTheHTTPAPI(t *testing.T) {
 		Events     []domain.Event       `json:"events"`
 	}
 	env.expect("GET", "/api/tasks/"+first.ID+"/detail", nil, http.StatusOK, &detail)
-	if len(detail.Executions) != 6 {
-		t.Fatalf("expected 6 executions in the history, got %d", len(detail.Executions))
+	if len(detail.Executions) != 5 {
+		t.Fatalf("expected 5 executions in the history, got %d", len(detail.Executions))
 	}
 	if detail.Step == nil || detail.Step.Name != "review" {
 		t.Errorf("expected the current step to be review, got %+v", detail.Step)
@@ -346,8 +352,8 @@ func TestProjectWorkflowThroughTheHTTPAPI(t *testing.T) {
 		t.Errorf("expected orchestration events for the task")
 	}
 	executions := decode[listEnvelope[domain.Execution]](t, env.do("GET", "/api/tasks/"+first.ID+"/executions", nil))
-	if executions.Total != 6 {
-		t.Errorf("expected 6 executions, got %d", executions.Total)
+	if executions.Total != 5 {
+		t.Errorf("expected 5 executions, got %d", executions.Total)
 	}
 
 	// 6. Rejecting sends the work back to the implementation step.

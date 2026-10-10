@@ -53,6 +53,11 @@ type ProjectSettings struct {
 	// CommitAgentChanges lets Orxest commit work an agent left uncommitted, so
 	// that no work is lost and integration stays deterministic.
 	CommitAgentChanges bool `json:"commit_agent_changes"`
+	// AutoAcceptPlans lets a validated architect plan be persisted without a
+	// human reviewing it first. When false (the default) the decomposition task
+	// stops in the "review" state with the plan as a draft, and a human approves
+	// or rejects it before any task is created.
+	AutoAcceptPlans bool `json:"auto_accept_plans"`
 	// GitAuthorName/Email are used for Orxest generated commits (for example
 	// merges) when set.
 	GitAuthorName  string `json:"git_author_name,omitempty"`
@@ -68,6 +73,7 @@ func DefaultProjectSettings() ProjectSettings {
 		KeepWorktrees:           false,
 		RequireCleanWorktree:    true,
 		CommitAgentChanges:      true,
+		AutoAcceptPlans:         false,
 	}
 }
 
@@ -82,6 +88,14 @@ func (p Project) WorktreeDir() string {
 // TaskWorktreePath is the isolated working directory for a task.
 func (p Project) TaskWorktreePath(taskID string) string {
 	return filepath.Join(p.WorktreeDir(), "task-"+shortID(taskID))
+}
+
+// IntegrationWorktreeDir is the Orxest-managed directory where merges into the
+// target branch are prepared. Keeping it outside the project's normal checkout
+// is what lets integration avoid switching, resetting or cleaning the
+// developer's working tree.
+func (p Project) IntegrationWorktreeDir() string {
+	return filepath.Join(filepath.Dir(p.WorktreeDir()), "integration")
 }
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
@@ -126,6 +140,14 @@ func (p *Project) Validate() error {
 	}
 	if strings.TrimSpace(p.TargetBranch) == "" {
 		return Invalidf("target_branch", "must not be empty")
+	}
+	if strings.TrimSpace(p.WorktreeRoot) != "" {
+		if !filepath.IsAbs(p.WorktreeRoot) {
+			return Invalidf("worktree_root", "must be an absolute path")
+		}
+		if filepath.Clean(p.WorktreeRoot) == filepath.Clean(p.RepositoryPath) {
+			return Invalidf("worktree_root", "must not be the repository path")
+		}
 	}
 	if p.Settings.MaxConcurrentExecutions < 0 {
 		return Invalidf("settings.max_concurrent_executions", "must not be negative")

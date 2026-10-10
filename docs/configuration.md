@@ -21,6 +21,11 @@ in [`examples/orxest.yaml`](../examples/orxest.yaml).
 server:
   host: 127.0.0.1
   port: 8787
+  # Orxest launches code-editing agents and ships without authentication, so it
+  # binds to loopback by default. Binding to any other address requires this
+  # explicit opt-in (or ORXEST_ALLOW_REMOTE=1) and an authenticating reverse
+  # proxy in front of the process.
+  allow_remote: false
   # Prefix every route, useful behind a reverse proxy.
   base_path: ""
   # Allow browser access from a Vite dev server (CORS).
@@ -113,7 +118,7 @@ part of Orxest.
 | Field | Meaning |
 | --- | --- |
 | `name` | unique name, for example `codex-senior` |
-| `harness` | adapter name (`codex`, `fake`) |
+| `harness` | adapter name (`codex`, `pi`, `fake`) |
 | `provider`, `model` | passed to the harness untouched |
 | `reasoning` | `none`, `minimal`, `low`, `medium`, `high` |
 | `enabled` | disabled agents are never selected |
@@ -121,7 +126,7 @@ part of Orxest.
 | `timeout_seconds` | per-execution timeout override |
 | `max_retries` | retry hint (the task/step budget is authoritative) |
 | `instructions` | prepended to every prompt of this agent |
-| `harness_options` | opaque per-harness settings (see below) |
+| `harness_options` | opaque per-harness settings, REST/JSON field name (see below). In a project YAML file the same map is spelled `options` |
 
 ## 2b. Pi harness
 
@@ -216,6 +221,27 @@ Project B: codex-standard -> senior-developer
 ```
 
 ---
+
+### How Orxest selects an agent
+
+A workflow step requests a **role**; it never names an agent. For each execution
+Orxest considers the project's assignments for that role and picks:
+
+1. the operator's one-shot reassignment hint, when it can serve the role;
+2. otherwise the enabled assignment with the **highest priority**;
+3. ties are broken by agent **name** (ascending), so selection is deterministic;
+4. an agent that is disabled, whose harness is not registered, or that is at its
+   concurrency limit is skipped, and the next candidate is used.
+
+If every candidate is busy, the task simply waits for the next tick — it is not
+marked blocked. If **no** candidate exists at all, the task is blocked with
+`policy_failure` and an explanation naming the role.
+
+Priority is *preference and failover*, not capability routing: assigning a senior
+and a junior agent to the same role does not make Orxest use the junior for easy
+tasks. Use the distinct `junior-developer` and `senior-developer` roles when you
+want that split. `GET /api/projects/{id}/staffing` (and the task detail response)
+report exactly this picture, including whether a role is missing or merely busy.
 
 ## 3. Project configuration file
 
@@ -312,8 +338,14 @@ Transition targets: `next`, `previous`, `same`/`retry`, `done`, `failed`,
 | Template | Steps |
 | --- | --- |
 | `minimal` | implementation (`developer`) |
-| `standard` | architecture, implementation, testing, review (approval gate) |
-| `production` | architecture, implementation, testing, security, review (approval gate) |
+| `standard` | implementation (`developer`), testing (`tester`), review (`reviewer`, approval gate) |
+| `production` | implementation (`senior-developer`), testing (`tester`), security (`security`), review (`reviewer`, approval gate) |
+
+Templates describe **task execution** only. Planning a feature with the
+architect is a separate, project/feature-scoped operation (`POST
+/api/projects/{id}/decompose`), so no template makes `architect` a mandatory
+staffing role. A project that genuinely wants a design stage per task can add an
+explicit step with the `architect` role to its own workflow.
 
 Templates are starting points: the project owns its workflow afterwards and can
 edit it in the UI or through `PUT /api/projects/{id}/workflow`.
@@ -328,6 +360,7 @@ edit it in the UI or through `PUT /api/projects/{id}/workflow`.
 | `keep_worktrees` | false | keep worktrees after a task finishes |
 | `require_clean_worktree` | true | refuse to delete a worktree with uncommitted changes |
 | `commit_agent_changes` | true | Orxest commits work an agent left uncommitted |
+| `auto_accept_plans` | false | persist a validated architect plan without a human review; when false the plan waits as a draft |
 | `git_author_name`, `git_author_email` | `Orxest <orxest@localhost>` | identity for Orxest generated commits |
 
 ---

@@ -21,7 +21,8 @@ import { Badge, type BadgeVariant } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ProjectStatsBar } from '@/features/projects/ProjectStatsBar'
-import { useProject, useProjectStats } from '@/hooks/queries'
+import { useProject, useProjectRepository, useProjectStats } from '@/hooks/queries'
+import { useProjectActions } from '@/hooks/mutations'
 import type { StreamStatus } from '@/hooks/useEventStream'
 import { useNow } from '@/hooks/useNow'
 import { useProjectStream } from '@/hooks/useProjectStream'
@@ -93,6 +94,13 @@ function SettingsBadges({ project }: { project: Project }) {
       title: 'Commit files changed by an agent automatically',
       variant: settings.commit_agent_changes ? 'info' : 'muted',
     },
+    {
+      label: `plan approval ${settings.auto_accept_plans ? 'auto' : 'required'}`,
+      title: settings.auto_accept_plans
+        ? 'Validated architect plans are persisted without a human review'
+        : 'An architect plan waits for a human decision before any task is scheduled',
+      variant: settings.auto_accept_plans ? 'muted' : 'purple',
+    },
   ]
 
   return (
@@ -126,6 +134,66 @@ function ProjectLayoutSkeleton() {
       </div>
       <Skeleton className="h-8 w-80" />
       <Skeleton className="h-40 w-full" />
+    </div>
+  )
+}
+
+/**
+ * Repository health banner. A project whose repository is missing or broken
+ * cannot execute work, so the state is shown explicitly with a fix action
+ * instead of only as a toast during creation.
+ */
+function RepositoryBanner({ project }: { project: Project }) {
+  const repositoryQuery = useProjectRepository(project.id)
+  const { ensureRepository } = useProjectActions()
+  const status = repositoryQuery.data
+  const broken = Boolean(status && !status.ok)
+
+  if (!broken) return null
+
+  return (
+    <div
+      role="status"
+      className="flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div className="flex flex-col gap-0.5">
+        <span className="font-medium text-foreground">
+          This project cannot execute work yet: the repository is not usable.
+        </span>
+        <span className="text-xs text-muted-foreground">
+          {status?.error ?? 'Orxest could not verify the repository path.'}
+        </span>
+        <span className="font-mono text-[11px] text-muted-foreground">{status?.path}</span>
+      </div>
+      <div className="flex shrink-0 flex-wrap gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => repositoryQuery.refetch()}
+          disabled={repositoryQuery.isFetching}
+        >
+          Re-check
+        </Button>
+        {project.repository_url ? (
+          <Button
+            size="sm"
+            onClick={() => ensureRepository.mutate({ projectId: project.id, init: false })}
+            disabled={ensureRepository.isPending}
+            title="Clone the configured repository URL into the project path"
+          >
+            Clone repository
+          </Button>
+        ) : null}
+        <Button
+          size="sm"
+          variant={project.repository_url ? 'outline' : 'default'}
+          onClick={() => ensureRepository.mutate({ projectId: project.id, init: true })}
+          disabled={ensureRepository.isPending}
+          title="Run git init with an initial commit in the project path"
+        >
+          Create repository here
+        </Button>
+      </div>
     </div>
   )
 }
@@ -223,10 +291,13 @@ export function ProjectLayout() {
 
       <ProjectStatsBar projectId={project.id} stats={statsQuery} />
 
+      <RepositoryBanner project={project} />
+
       <nav
         aria-label="Project sections"
-        className="inline-flex h-8 w-fit items-center justify-start gap-0.5 rounded-md border border-border bg-muted/40 p-0.5 text-muted-foreground"
+        className="-mx-1 max-w-full overflow-x-auto px-1 pb-1"
       >
+        <div className="inline-flex h-8 w-fit items-center justify-start gap-0.5 rounded-md border border-border bg-muted/40 p-0.5 text-muted-foreground">
         {TABS.map((tab) => (
           <NavLink
             key={tab.to}
@@ -245,6 +316,7 @@ export function ProjectLayout() {
             {tab.label}
           </NavLink>
         ))}
+        </div>
       </nav>
 
       <Outlet />

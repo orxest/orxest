@@ -345,6 +345,12 @@ func (s *TaskService) EvaluateReadiness(ctx context.Context, task *domain.Task) 
 			r.Ready = false
 			r.Reason = fmt.Sprintf("dependency %q is %s", d.Title, d.Status)
 			return r, nil
+		case domain.TaskIntegrationPending:
+			// The dependency's code is not on the shared target branch yet, so a
+			// dependent task must not start from a base that lacks it (spec §25).
+			r.Ready = false
+			r.Reason = fmt.Sprintf("dependency %q is awaiting integration", d.Title)
+			return r, nil
 		default:
 			r.Ready = false
 			r.Pending = append(r.Pending, d.TaskID)
@@ -360,8 +366,7 @@ func (s *TaskService) EvaluateReadiness(ctx context.Context, task *domain.Task) 
 // matching orchestration event.
 func (s *TaskService) SetStatus(ctx context.Context, task *domain.Task, to domain.TaskStatus, opts statusOptions) error {
 	if task.Status == to {
-		task.UpdatedAt = s.deps.now()
-		return s.deps.Store.Tasks().Update(ctx, task)
+		return s.refreshStatus(ctx, task, to, opts)
 	}
 	if !domain.CanTransitionTask(task.Status, to) {
 		return domain.Conflictf("cannot move task %q from %q to %q", task.Title, task.Status, to)
@@ -400,6 +405,43 @@ func (s *TaskService) SetStatus(ctx context.Context, task *domain.Task, to domai
 	return nil
 }
 
+// refreshStatus applies informational options (blocked reason, failure kind,
+// error, failure reset) to a task that is already in the target status. Without
+// this, a repeated outcome — a second integration conflict, a different missing
+// role, a fresh resolution attempt — would keep the stale reason because the
+// status itself did not change.
+func (s *TaskService) refreshStatus(ctx context.Context, task *domain.Task, to domain.TaskStatus, opts statusOptions) error {
+	changed := false
+	if opts.clearFailure && (task.FailureKind != domain.FailureNone || task.LastError != "") {
+		task.FailureKind = domain.FailureNone
+		task.LastError = ""
+		changed = true
+	}
+	if opts.blockedReason != "" && task.BlockedReason != opts.blockedReason {
+		task.BlockedReason = opts.blockedReason
+		changed = true
+	} else if opts.blockedReason == "" && to != domain.TaskBlocked && task.BlockedReason != "" {
+		task.BlockedReason = ""
+		changed = true
+	}
+	if opts.failureKind != domain.FailureNone && task.FailureKind != opts.failureKind {
+		task.FailureKind = opts.failureKind
+		changed = true
+	}
+	if opts.error != "" && task.LastError != opts.error {
+		task.LastError = opts.error
+		changed = true
+	}
+	task.UpdatedAt = s.deps.now()
+	if err := s.deps.Store.Tasks().Update(ctx, task); err != nil {
+		return err
+	}
+	if changed {
+		s.publishTask(ctx, task)
+	}
+	return nil
+}
+
 type statusOptions struct {
 	blockedReason string
 	failureKind   domain.FailureKind
@@ -418,6 +460,8 @@ func (s *TaskService) publishTask(ctx context.Context, task *domain.Task) {
 		eventType = domain.EventTaskStarted
 	case domain.TaskReview:
 		eventType = domain.EventTaskReview
+	case domain.TaskIntegrationPending:
+		eventType = domain.EventTaskIntegrationPending
 	case domain.TaskDone:
 		eventType = domain.EventTaskCompleted
 	case domain.TaskFailed:
@@ -461,6 +505,8 @@ func messageFor(task *domain.Task, eventType string) string {
 		return "task started: " + task.Title
 	case domain.EventTaskReview:
 		return "task awaiting review: " + task.Title
+	case domain.EventTaskIntegrationPending:
+		return "task awaiting Git integration: " + task.Title
 	case domain.EventTaskCompleted:
 		return "task completed: " + task.Title
 	case domain.EventTaskFailed:

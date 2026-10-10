@@ -50,9 +50,10 @@ func harnesses(h ...ports.Harness) map[string]ports.Harness {
 	return out
 }
 
-// newProject creates a project with the standard workflow (architect,
-// developer, tester, reviewer) and one agent per role, all backed by the fake
-// harness.
+// newProject creates a project with the standard workflow (implementation,
+// testing, agent review plus a human approval gate) and one agent per role,
+// all backed by the fake harness. Planning is a separate operation: the
+// architect is not part of the per-task workflow (spec §14/§16).
 func newProject(t *testing.T, svc *app.Service, repo string) *domain.Project {
 	t.Helper()
 	bundle, err := svc.Projects.Create(context.Background(), app.CreateProjectInput{
@@ -117,9 +118,9 @@ func executionsByStep(t *testing.T, svc *app.Service, taskID string) map[string]
 	return out
 }
 
-// TestAcceptanceScenario mirrors the first end-to-end acceptance scenario of
-// the specification (§56): architect → developer → tester (fails) → developer
-// (rework) → tester → reviewer → approval → integration → done.
+// TestAcceptanceScenario mirrors the standard end-to-end acceptance scenario:
+// implementation → testing (fails) → implementation (rework) → testing →
+// reviewer (agent review) → human approval gate → integration → done.
 func TestAcceptanceScenario(t *testing.T) {
 	ctx := context.Background()
 	repo := testsupport.Repository(t, "main")
@@ -150,8 +151,8 @@ func TestAcceptanceScenario(t *testing.T) {
 	}
 
 	byStep := executionsByStep(t, svc, task.ID)
-	if byStep["architecture"] != 1 {
-		t.Errorf("expected 1 architecture execution, got %d", byStep["architecture"])
+	if _, ok := byStep["architecture"]; ok {
+		t.Errorf("the architect must not be a mandatory per-task step, saw %d architecture executions", byStep["architecture"])
 	}
 	if byStep["implementation"] != 2 {
 		t.Errorf("expected the implementation step to run twice (initial + rework), got %d", byStep["implementation"])
@@ -159,8 +160,11 @@ func TestAcceptanceScenario(t *testing.T) {
 	if byStep["testing"] != 2 {
 		t.Errorf("expected the testing step to run twice (fail + pass), got %d", byStep["testing"])
 	}
-	if current.AttemptCount != 6 {
-		t.Errorf("expected 6 executions in total, got attempt_count=%d", current.AttemptCount)
+	if byStep["review"] != 1 {
+		t.Errorf("expected the agent review to run once, got %d", byStep["review"])
+	}
+	if current.AttemptCount != 5 {
+		t.Errorf("expected 5 executions in total, got attempt_count=%d", current.AttemptCount)
 	}
 
 	// The task points at the commit Orxest created on its branch, so the task
@@ -174,8 +178,8 @@ func TestAcceptanceScenario(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listing executions: %v", err)
 	}
-	if len(execs) != 6 {
-		t.Fatalf("expected 6 preserved executions, got %d", len(execs))
+	if len(execs) != 5 {
+		t.Fatalf("expected 5 preserved executions, got %d", len(execs))
 	}
 	var failed, reworked int
 	agents := map[string]bool{}
@@ -189,7 +193,7 @@ func TestAcceptanceScenario(t *testing.T) {
 		t.Errorf("expected exactly one failed execution, got %d", failed)
 	}
 	_ = reworked
-	if !agents["codex-senior"] || !agents["codex-tester"] || !agents["codex-architect"] {
+	if !agents["codex-senior"] || !agents["codex-tester"] || !agents["codex-reviewer"] {
 		t.Errorf("expected different agents per stage, saw %v", agents)
 	}
 

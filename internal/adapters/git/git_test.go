@@ -333,3 +333,101 @@ func TestWorkspacePathGuards(t *testing.T) {
 		t.Error("expected a missing branch name to be rejected")
 	}
 }
+
+// TestWorkspaceRootIsEnforced covers the rule that Orxest only ever creates or
+// removes worktrees inside the workspace it was configured to own, so a bad
+// project configuration cannot reach elsewhere on the host.
+func TestWorkspaceRootIsEnforced(t *testing.T) {
+	ctx := context.Background()
+	a := gitadapter.New()
+	repo := newRepo(t, "main")
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	outside := filepath.Join(t.TempDir(), "outside")
+
+	if _, err := a.CreateWorktree(ctx, ports.WorktreeRequest{
+		RepositoryPath: repo, Path: filepath.Join(outside, "task-1"), Branch: "orxest/task/1",
+		BaseBranch: "main", WorkspaceRoot: workspace,
+	}); err == nil {
+		t.Fatal("expected a worktree outside the configured workspace to be rejected")
+	}
+
+	inside := filepath.Join(workspace, "task-1")
+	if _, err := a.CreateWorktree(ctx, ports.WorktreeRequest{
+		RepositoryPath: repo, Path: inside, Branch: "orxest/task/1",
+		BaseBranch: "main", WorkspaceRoot: workspace,
+	}); err != nil {
+		t.Fatalf("expected a worktree inside the workspace to be created: %v", err)
+	}
+	if err := a.RemoveWorktree(ctx, ports.RemoveWorktreeRequest{
+		RepositoryPath: repo, Path: filepath.Join(outside, "task-1"), WorkspaceRoot: workspace,
+	}); err == nil {
+		t.Error("expected cleanup outside the configured workspace to be rejected")
+	}
+}
+
+// TestIntegrateWithUntrackedFilesInTheCheckout covers the difference between
+// tracked and untracked changes in the developer's checkout: untracked files
+// (planning artifacts, scratch files, build output) must not block integration,
+// while tracked modifications still must.
+func TestIntegrateWithUntrackedFilesInTheCheckout(t *testing.T) {
+	ctx := context.Background()
+	a := gitadapter.New()
+	repo := newRepo(t, "main")
+
+	// An untracked file in the primary checkout, and the target branch checked
+	// out there: the fast-forward must still work and leave the file alone.
+	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("scratch\n"), 0o644); err != nil {
+		t.Fatalf("writing the untracked file: %v", err)
+	}
+
+	worktree := filepath.Join(t.TempDir(), "feature")
+	if _, err := a.CreateWorktree(ctx, ports.WorktreeRequest{
+		RepositoryPath: repo, Path: worktree, Branch: "orxest/task/feature", BaseBranch: "main",
+	}); err != nil {
+		t.Fatalf("creating the worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatalf("writing the feature: %v", err)
+	}
+	if _, err := a.CommitAll(ctx, worktree, "add feature", "Orxest", "orxest@localhost"); err != nil {
+		t.Fatalf("committing the feature: %v", err)
+	}
+
+	result, err := a.Integrate(ctx, ports.IntegrateRequest{
+		RepositoryPath: repo, Branch: "orxest/task/feature", TargetBranch: "main", Message: "merge feature",
+	})
+	if err != nil {
+		t.Fatalf("integrating with untracked files present: %v", err)
+	}
+	if !result.Integrated || result.Blocked {
+		t.Fatalf("untracked files must not block integration, got %+v", result)
+	}
+	if len(result.Warnings) == 0 {
+		t.Error("expected a warning about the untracked files")
+	}
+	if content, err := os.ReadFile(filepath.Join(repo, "untracked.txt")); err != nil || string(content) != "scratch\n" {
+		t.Errorf("expected the untracked file to be preserved, got %q (err=%v)", content, err)
+	}
+
+	// The same file, now tracked and modified, must block integration.
+	run(t, repo, "add", "untracked.txt")
+	run(t, repo, "commit", "-m", "track the file")
+	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("edited\n"), 0o644); err != nil {
+		t.Fatalf("editing the tracked file: %v", err)
+	}
+	blocked, err := a.Integrate(ctx, ports.IntegrateRequest{
+		RepositoryPath: repo, Branch: "orxest/task/feature", TargetBranch: "main", Message: "merge again",
+	})
+	if err != nil {
+		t.Fatalf("integrating with tracked changes: %v", err)
+	}
+	if !blocked.Blocked {
+		t.Fatalf("tracked changes must block integration, got %+v", blocked)
+	}
+	if !strings.Contains(blocked.BlockedReason, "untracked.txt") {
+		t.Errorf("expected the blocked reason to name the file, got %q", blocked.BlockedReason)
+	}
+	if content, err := os.ReadFile(filepath.Join(repo, "untracked.txt")); err != nil || string(content) != "edited\n" {
+		t.Errorf("expected the edited file to be untouched, got %q (err=%v)", content, err)
+	}
+}

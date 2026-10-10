@@ -214,6 +214,12 @@
                 "estimated_complexity": {
                   "type": "string"
                 },
+                "id": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                },
                 "labels": {
                   "items": {
                     "type": "string"
@@ -266,6 +272,12 @@
             "type": "string"
           },
           "estimated_complexity": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "key": {
             "type": "string"
           },
           "labels": {
@@ -510,6 +522,9 @@
               "settings": {
                 "additionalProperties": false,
                 "properties": {
+                  "auto_accept_plans": {
+                    "type": "boolean"
+                  },
                   "auto_integrate": {
                     "type": "boolean"
                   },
@@ -541,7 +556,8 @@
                   "auto_integrate",
                   "keep_worktrees",
                   "require_clean_worktree",
-                  "commit_agent_changes"
+                  "commit_agent_changes",
+                  "auto_accept_plans"
                 ],
                 "type": "object"
               },
@@ -805,6 +821,9 @@
           "settings": {
             "additionalProperties": false,
             "properties": {
+              "auto_accept_plans": {
+                "type": "boolean"
+              },
               "auto_integrate": {
                 "type": "boolean"
               },
@@ -836,7 +855,8 @@
               "auto_integrate",
               "keep_worktrees",
               "require_clean_worktree",
-              "commit_agent_changes"
+              "commit_agent_changes",
+              "auto_accept_plans"
             ]
           },
           "target_branch": {
@@ -1078,6 +1098,12 @@
                       "type": "string"
                     },
                     "estimated_complexity": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "key": {
                       "type": "string"
                     },
                     "labels": {
@@ -1909,6 +1935,9 @@
           "settings": {
             "additionalProperties": false,
             "properties": {
+              "auto_accept_plans": {
+                "type": "boolean"
+              },
               "auto_integrate": {
                 "type": "boolean"
               },
@@ -1940,7 +1969,8 @@
               "auto_integrate",
               "keep_worktrees",
               "require_clean_worktree",
-              "commit_agent_changes"
+              "commit_agent_changes",
+              "auto_accept_plans"
             ],
             "type": "object"
           },
@@ -2358,6 +2388,9 @@
               "settings": {
                 "additionalProperties": false,
                 "properties": {
+                  "auto_accept_plans": {
+                    "type": "boolean"
+                  },
                   "auto_integrate": {
                     "type": "boolean"
                   },
@@ -2389,7 +2422,8 @@
                   "auto_integrate",
                   "keep_worktrees",
                   "require_clean_worktree",
-                  "commit_agent_changes"
+                  "commit_agent_changes",
+                  "auto_accept_plans"
                 ],
                 "type": "object"
               },
@@ -2555,6 +2589,9 @@
       "ProjectSettings": {
         "additionalProperties": false,
         "properties": {
+          "auto_accept_plans": {
+            "type": "boolean"
+          },
           "auto_integrate": {
             "type": "boolean"
           },
@@ -2586,7 +2623,8 @@
           "auto_integrate",
           "keep_worktrees",
           "require_clean_worktree",
-          "commit_agent_changes"
+          "commit_agent_changes",
+          "auto_accept_plans"
         ],
         "type": "object"
       },
@@ -2738,6 +2776,142 @@
           "id",
           "name",
           "description"
+        ],
+        "type": "object"
+      },
+      "RoleStaffing": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "active_executions": {
+                  "type": "integer"
+                },
+                "agent_id": {
+                  "type": "string"
+                },
+                "agent_name": {
+                  "type": "string"
+                },
+                "assignment_id": {
+                  "type": "string"
+                },
+                "available": {
+                  "type": "boolean"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "harness": {
+                  "type": "string"
+                },
+                "harness_available": {
+                  "type": "boolean"
+                },
+                "max_concurrent_executions": {
+                  "type": "integer"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "priority": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "assignment_id",
+                "agent_id",
+                "agent_name",
+                "harness",
+                "priority",
+                "enabled",
+                "harness_available",
+                "active_executions",
+                "max_concurrent_executions",
+                "available"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "role_exists": {
+            "type": "boolean"
+          },
+          "role_id": {
+            "type": "string"
+          },
+          "selectable": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "project_id",
+          "role_id",
+          "role_exists",
+          "candidates",
+          "selectable"
+        ],
+        "type": "object"
+      },
+      "StaffingCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "active_executions": {
+            "type": "integer"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "agent_name": {
+            "type": "string"
+          },
+          "assignment_id": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "harness_available": {
+            "type": "boolean"
+          },
+          "max_concurrent_executions": {
+            "type": "integer"
+          },
+          "model": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "agent_id",
+          "agent_name",
+          "harness",
+          "priority",
+          "enabled",
+          "harness_available",
+          "active_executions",
+          "max_concurrent_executions",
+          "available"
         ],
         "type": "object"
       },
@@ -2899,6 +3073,9 @@
           "settings": {
             "additionalProperties": false,
             "properties": {
+              "auto_accept_plans": {
+                "type": "boolean"
+              },
               "auto_integrate": {
                 "type": "boolean"
               },
@@ -2930,7 +3107,8 @@
               "auto_integrate",
               "keep_worktrees",
               "require_clean_worktree",
-              "commit_agent_changes"
+              "commit_agent_changes",
+              "auto_accept_plans"
             ]
           },
           "target_branch": {},
@@ -4576,7 +4754,7 @@
             "description": "Internal error"
           }
         },
-        "summary": "Deployment metadata: harnesses, roles, templates, limits",
+        "summary": "Deployment metadata: harnesses, roles, templates, limits and the task state machine",
         "tags": [
           "system"
         ]
@@ -5752,7 +5930,7 @@
             "description": "Internal error"
           }
         },
-        "summary": "Architect-driven decomposition into issues and tasks",
+        "summary": "Plan work with the architect: create a decomposition task whose validated output becomes a draft plan",
         "tags": [
           "projects"
         ]
@@ -6233,6 +6411,80 @@
         "summary": "Prepare or re-check the repository",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/api/projects/{id}/staffing": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Project id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RoleStaffing"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflicting state"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "summary": "Which project agents can serve each role the workflow requires",
+        "tags": [
+          "agents"
         ]
       }
     },
@@ -7109,6 +7361,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -7171,7 +7433,7 @@
             "description": "Internal error"
           }
         },
-        "summary": "Approve the work of an approval gate step",
+        "summary": "Approve an approval gate step or a draft architect plan (body {plan} approves an edited plan)",
         "tags": [
           "tasks"
         ]
@@ -7648,6 +7910,87 @@
         ]
       }
     },
+    "/api/tasks/{id}/integrate": {
+      "post": {
+        "parameters": [
+          {
+            "description": "Task id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflicting state"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "summary": "Integrate a task parked in the integration-pending state",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
     "/api/tasks/{id}/move": {
       "post": {
         "parameters": [
@@ -7915,7 +8258,88 @@
             "description": "Internal error"
           }
         },
-        "summary": "Reject the work of an approval gate step (rework)",
+        "summary": "Reject an approval gate step or a draft plan (rework)",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/tasks/{id}/resolve-conflict": {
+      "post": {
+        "parameters": [
+          {
+            "description": "Task id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflicting state"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "summary": "Send a task blocked by an integration conflict back to an agent to resolve the merge",
         "tags": [
           "tasks"
         ]

@@ -6,6 +6,10 @@
 server:
   host: 127.0.0.1
   port: 8787
+  # Orxest drives code-editing agents and has no built-in authentication, so it
+  # refuses a non-loopback host unless this is set explicitly. Keep it false
+  # unless an authenticating proxy sits in front.
+  allow_remote: false
   # Serve everything under a prefix, for example behind nginx at /orxest.
   base_path: ""
   # Only needed when the Vite dev server (http://localhost:5173) talks to this

@@ -19,7 +19,15 @@ make build                       # builds web/dist, then the binary with it embe
 Or without the web interface:
 
 ```bash
-./bin/orxest serve --db /var/lib/orxest/orxest.db --host 0.0.0.0 --port 8787
+./bin/orxest serve --db /var/lib/orxest/orxest.db --port 8787
+```
+
+Binding to a non-loopback address is refused unless you opt in explicitly
+(`server.allow_remote: true` or `ORXEST_ALLOW_REMOTE=1`), because Orxest drives
+code-editing agents and ships without authentication:
+
+```bash
+ORXEST_HOST=0.0.0.0 ORXEST_ALLOW_REMOTE=1 ./bin/orxest serve   # behind an authenticating proxy
 ```
 
 Everything is a single process plus a SQLite file. `orxest migrate` applies
@@ -33,15 +41,20 @@ migrations and exits; `orxest serve` also migrates on startup.
    - `codex-architect` — harness `codex`, reasoning `medium`
    - `codex-senior` — harness `codex`, reasoning `high`, `max_concurrent_executions: 1`
    - `codex-tester`, `codex-reviewer`
-3. **Create a project**: name, repository path (a local Git checkout), target
-   branch, workflow template, and one agent per role. Tick *initialise a new
-   repository* if the path does not exist yet — Orxest runs `git init` plus an
-   initial commit.
-4. **Create an issue and tasks**, or use *Decompose with architect* to let an
-   architect agent produce the tasks.
+3. **Create a project**: choose the repository source explicitly — *use an
+   existing local repository*, *clone a repository* (URL + destination), or
+   *create a new repository* (Orxest runs `git init` plus one initial commit) —
+   then pick the target branch, workflow template and one agent per role. If the
+   repository cannot be prepared, the project is created with a visible
+   "repository is not usable" banner and a fix action, not just a toast.
+4. **Create an issue and tasks manually**, or use *Plan work with architect* to
+   turn a feature request into a proposed issue/task graph. The plan is a draft:
+   review it, then approve (which persists the tasks) or reject (which asks the
+   architect again). Set `settings.auto_accept_plans` only if you want validated
+   plans to be persisted without that review.
 5. **Watch the board.** Ready tasks are picked up automatically; approve or
-   reject at an approval gate, retry failures, reassign agents, or move work
-   between steps.
+   reject at an approval gate, retry failures, reassign agents, move work between
+   steps, or run *Integrate* on a task that is awaiting Git integration.
 
 ## Repository and worktree behaviour
 
@@ -50,12 +63,33 @@ Orxest operates on your checkout, not on a copy:
 - Task branches are `orxest/task/<short task id>`.
 - Worktrees live in `<repository>/.orxest/worktrees/task-<short id>` and the
   directory is added to `.git/info/exclude`.
-- **Integration switches your checkout to the target branch and merges the task
-  branch into it** (`git merge --no-ff`). Do not run Orxest against a checkout
-  with uncommitted work you care about, or set `settings.auto_integrate: false`
-  and integrate manually.
+- **Integration never switches, resets, cleans or merges inside your checkout.**
+  Orxest prepares the merge in an Orxest-managed worktree that is detached at the
+  target branch (`<worktree_root>/integration/`), then advances the target branch
+  reference:
+  - target branch checked out in another worktree → refused, Orxest will not
+    rewrite a working tree it does not own;
+  - target branch checked out in the project repository **with uncommitted
+    tracked changes** → refused with an actionable reason naming the files, so
+    your work is untouched. Untracked files (planning artifacts, scratch files,
+    build output) do **not** block integration: the fast-forward leaves them
+    alone, and git itself refuses the merge if one of them would be overwritten.
+    A warning is recorded on the task when they are present;
+  - target branch checked out in the project repository and clean (or dirty only
+    with untracked files) → the checkout is fast-forwarded so it stays consistent
+    with the branch;
+  - target branch not checked out anywhere → only the branch ref is updated.
+- With `settings.auto_integrate: false` a finished task stops in the explicit
+  `integration` state ("Awaiting integration") and dependent tasks stay blocked
+  until you run `POST /api/tasks/{id}/integrate`. The task is never marked `done`
+  while its changes are not on the target branch.
 - A merge conflict aborts the merge and blocks the task with failure kind
   `integration_conflict`; the conflicted files are listed on the execution.
+- Worktrees are only removed after a successful integration (or when the task
+  produced nothing). With `require_clean_worktree: true` (the default) a dirty
+  worktree is kept and the reason is logged; discarding uncommitted work requires
+  the explicit `require_clean_worktree: false` policy and is reported as an
+  event.
 
 ## Concurrency
 
@@ -95,13 +129,15 @@ startup repairs executions that were killed mid-flight.
 | Task is `blocked` because a dependency failed | Fix and retry the dependency; the dependent task resumes automatically once the dependency is done. |
 | Task is `blocked` with an unregistered-harness hint | The agent uses a harness this binary does not provide (check `GET /api/meta` → `harnesses`). |
 | Task is `failed` with *step … used its N attempt(s)* | The retry budget is spent. Fix the underlying problem, then retry with `reset_attempts: true`. |
+| Task is `failed` with *architect output is not a valid plan* | The decomposition agent produced no usable plan JSON. It must return one JSON object with `issue` and `tasks`, and Orxest also looks for the same JSON at `<task worktree>/decomposition/plan.json`, then at `<project repository>/decomposition/plan.json` (the error names every path it tried). Task labels `ref`/`id`/`key`/`task_id` are accepted, acceptance criteria may be a string or a list of strings, and a bare `depends_on` id is treated as a one-element list — so a shape difference alone does not fail a plan. Fix the plan and paste it through *Plan work with architect → Advanced*, or retry the decomposition. |
 | Execution fails immediately with `environment_failure` | The agent CLI is not on `PATH`, is not authenticated, or the worktree is unusable. Check the execution log and `codex --version` / `pi --version`. |
 | Pi reports `Unknown provider` / `Unknown model` | The agent's `provider`/`model` are not configured in Pi. Run `pi --list-models` (with the same `PI_CODING_AGENT_DIR` Orxest uses) and copy an exact model id. |
 | Pi cannot reach a local model | Check the provider's `baseUrl` in Pi's `models.json` is reachable, for example `curl http://127.0.0.1:8080/v1/models`. |
 | Pi needs GEMINI/ANTHROPIC/OPENAI credentials | Export the provider's API key in the environment that starts Orxest, or set it under `harness.pi.env`. Keys are never stored in the Orxest database. |
 | Pi run ends with a model error but exit code 0 | Pi retries model errors itself and still exits 0; Orxest detects this from Pi's `stopReason`/`auto_retry_end` and fails the execution with an environment failure. Read the execution log for the provider's message. |
 | Board shows tasks in *Backlog* forever | Their dependencies are not done (see the dependency graph), or the issue is unassigned: open the task view for the reason. |
-| Integration conflict | Resolve on the task branch manually: the worktree is kept, the conflicted files are listed on the execution. Then retry or move the task. |
+| Integration conflict (*integration conflict while merging …* / `integration_conflict`) | The task branch and the target branch changed the same lines. The merge was aborted, so the target branch is untouched and the task branch keeps its commits. Resolve it in the task worktree named in the blocked reason: `git merge <target>`, fix the conflicting files, commit, then `POST /api/tasks/{id}/integrate`. Tear down the task instead (`cancel`) if the work is no longer wanted. |
+| Task is `blocked` with *… checked out in … with uncommitted tracked changes* | Your project checkout is on the target branch with modified tracked files, so Orxest will not move the branch under you. Commit, stash or switch that checkout, then run `POST /api/tasks/{id}/integrate`. Untracked files alone never cause this. |
 | Worktree still exists after completion | `keep_worktrees` is on, or the tree is dirty and `require_clean_worktree` is on. Clean it yourself, or set the policy. |
 
 ## Backup and reset

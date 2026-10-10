@@ -19,6 +19,7 @@ export const TASK_STATUS_ORDER: TaskStatus[] = [
   'queued',
   'running',
   'review',
+  'integration',
   'blocked',
   'failed',
   'done',
@@ -31,6 +32,11 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
   queued: { label: 'Queued', variant: 'info', description: 'Claimed by the scheduler' },
   running: { label: 'Running', variant: 'default', description: 'An execution is in flight' },
   review: { label: 'Review', variant: 'purple', description: 'Waiting for a human decision' },
+  integration: {
+    label: 'Awaiting integration',
+    variant: 'warning',
+    description: 'The workflow finished; the branch must be integrated into the target branch',
+  },
   blocked: { label: 'Blocked', variant: 'warning', description: 'Cannot proceed without help' },
   failed: { label: 'Failed', variant: 'danger', description: 'Workflow concluded in failure' },
   done: { label: 'Done', variant: 'success', description: 'Completed and integrated' },
@@ -154,7 +160,10 @@ export const RESERVED_TRANSITIONS = [
 const TERMINAL_STATUSES: TaskStatus[] = ['done', 'cancelled']
 
 /** Action availability mirrors the backend rules; the server stays authoritative. */
-export function taskActions(status: TaskStatus): {
+export function taskActions(
+  status: TaskStatus,
+  failureKind?: string,
+): {
   canStart: boolean
   canRetry: boolean
   canCancel: boolean
@@ -162,6 +171,8 @@ export function taskActions(status: TaskStatus): {
   canReject: boolean
   canReassign: boolean
   canMove: boolean
+  canIntegrate: boolean
+  canResolveConflict: boolean
 } {
   const terminal = TERMINAL_STATUSES.includes(status)
   return {
@@ -175,6 +186,13 @@ export function taskActions(status: TaskStatus): {
     canReject: status === 'review',
     canReassign: !terminal,
     canMove: !terminal,
+    // Integration can also be retried after a conflict was resolved by hand.
+    canIntegrate:
+      status === 'integration' ||
+      (status === 'blocked' && failureKind === 'integration_conflict'),
+    // A blocked integration conflict can be handed to a coding agent instead of
+    // being resolved by hand.
+    canResolveConflict: status === 'blocked' && failureKind === 'integration_conflict',
   }
 }
 
@@ -191,6 +209,7 @@ export const EVENT_TYPE_ICON_COLORS: Record<string, BadgeVariant> = {
   'task.rework': 'purple',
   'task.cancelled': 'muted',
   'task.review': 'purple',
+  'task.integration_pending': 'warning',
   'execution.started': 'default',
   'execution.output': 'muted',
   'execution.completed': 'success',
@@ -204,23 +223,39 @@ export const EVENT_TYPE_ICON_COLORS: Record<string, BadgeVariant> = {
 }
 
 /**
- * Mirror of the authoritative `taskTransitions` map in
- * `internal/domain/task.go`. It is used to grey out transitions the backend
- * would reject; the server remains the source of truth.
+ * Fallback mirror of `taskTransitions` in `internal/domain/task.go`. The
+ * authoritative map is published by `GET /api/meta`; `hydrateTaskStateModel`
+ * replaces this fallback as soon as the app has loaded it, so the UI does not
+ * drift from the backend state machine.
  */
 export const TASK_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   backlog: ['ready', 'queued', 'blocked', 'cancelled'],
   ready: ['queued', 'running', 'blocked', 'cancelled', 'backlog'],
   queued: ['running', 'ready', 'failed', 'blocked', 'cancelled'],
-  running: ['ready', 'review', 'done', 'failed', 'blocked', 'cancelled'],
-  review: ['ready', 'done', 'failed', 'blocked', 'cancelled'],
-  blocked: ['ready', 'queued', 'backlog', 'cancelled', 'failed'],
+  running: ['ready', 'review', 'integration', 'done', 'failed', 'blocked', 'cancelled'],
+  review: ['ready', 'integration', 'done', 'failed', 'blocked', 'cancelled'],
+  integration: ['done', 'failed', 'blocked', 'ready', 'cancelled'],
+  blocked: ['ready', 'queued', 'integration', 'backlog', 'cancelled', 'failed', 'done'],
   failed: ['ready', 'backlog', 'cancelled'],
   done: ['ready'],
   cancelled: ['backlog', 'ready'],
 }
 
+let serverTransitions: Record<string, TaskStatus[]> | null = null
+
+/**
+ * hydrateTaskStateModel installs the state machine the backend reported in
+ * `GET /api/meta`. Called once the metadata query resolves.
+ */
+export function hydrateTaskStateModel(transitions: Record<string, TaskStatus[]> | undefined): void {
+  if (!transitions || Object.keys(transitions).length === 0) return
+  serverTransitions = transitions
+}
+
 export function allowedTaskStatuses(from: TaskStatus | string): TaskStatus[] {
+  if (serverTransitions && serverTransitions[from]) {
+    return serverTransitions[from]
+  }
   const key = from as TaskStatus
   return TASK_TRANSITIONS[key] ?? TASK_STATUS_ORDER
 }

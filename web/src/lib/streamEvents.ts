@@ -24,6 +24,7 @@ export const PROJECT_STREAM_EVENTS: readonly string[] = [
   'task.rework',
   'task.cancelled',
   'task.review',
+  'task.integration_pending',
   'execution.started',
   'execution.output',
   'execution.completed',

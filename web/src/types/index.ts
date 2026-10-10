@@ -10,6 +10,7 @@ export type TaskStatus =
   | 'queued'
   | 'running'
   | 'review'
+  | 'integration'
   | 'blocked'
   | 'failed'
   | 'done'
@@ -61,6 +62,8 @@ export interface ProjectSettings {
   keep_worktrees: boolean
   require_clean_worktree: boolean
   commit_agent_changes: boolean
+  /** When false (default), an architect plan waits for human approval. */
+  auto_accept_plans?: boolean
   git_author_name?: string
   git_author_email?: string
 }
@@ -308,6 +311,43 @@ export interface TaskDetail {
   dependencies: TaskDependencyStatus[]
   dependents: Task[]
   events: OrxestEvent[]
+  /** Present when a decomposition task is waiting for plan approval. */
+  plan_draft?: ArchitectPlan
+  /** Which project agents can staff the current step's role right now. */
+  agent_selection?: RoleStaffing
+}
+
+/** One project agent that could serve a role. */
+export interface StaffingCandidate {
+  assignment_id: string
+  agent_id: string
+  agent_name: string
+  harness: string
+  model?: string
+  priority: number
+  enabled: boolean
+  harness_available: boolean
+  active_executions: number
+  max_concurrent_executions: number
+  available: boolean
+}
+
+/** Whether a workflow step's role can be staffed in a project right now. */
+export interface RoleStaffing {
+  project_id: string
+  role_id: string
+  role_exists: boolean
+  candidates: StaffingCandidate[]
+  selectable: string[]
+  reason?: string
+}
+
+export interface RepositoryStatus {
+  ok: boolean
+  path: string
+  default_branch?: string
+  target_branch?: string
+  error?: string
 }
 
 export interface Meta {
@@ -322,6 +362,9 @@ export interface Meta {
     poll_interval_ms: number
   }
   event_types: string[]
+  /** Authoritative task state machine, published by the backend. */
+  task_statuses: TaskStatus[]
+  task_transitions: Record<string, TaskStatus[]>
 }
 
 export interface Health {

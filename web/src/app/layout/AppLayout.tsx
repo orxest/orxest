@@ -1,14 +1,29 @@
+import { useEffect } from 'react'
 import { Activity, Blocks, Gauge, Moon, RefreshCw, Sun, Terminal } from 'lucide-react'
 import { Link, NavLink, Outlet } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
 import { Hint } from '@/components/ui/tooltip'
 import { StatusDot } from '@/components/common/StatusBadge'
-import { useHealth, useSchedulerStatus } from '@/hooks/queries'
+import { useHealth, useMeta, useSchedulerStatus } from '@/hooks/queries'
 import { useSchedulerTick } from '@/hooks/mutations'
 import { useTheme } from '@/hooks/useTheme'
 import { relativeTime } from '@/lib/format'
+import { hydrateTaskStateModel } from '@/lib/status'
 import { cn } from '@/lib/utils'
+
+/**
+ * The backend publishes the authoritative task state machine on `/api/meta`;
+ * installing it here keeps every board, menu and dialog in sync with the
+ * server instead of a hand-maintained copy.
+ */
+function TaskStateModel() {
+  const { data } = useMeta()
+  useEffect(() => {
+    if (data?.task_transitions) hydrateTaskStateModel(data.task_transitions)
+  }, [data?.task_transitions])
+  return null
+}
 
 const NAV_ITEMS = [
   { to: '/', label: 'Projects', icon: Blocks, end: true },
@@ -128,7 +143,8 @@ export function AppLayout() {
 
           <div className="ml-auto flex items-center gap-2">
             <SchedulerIndicator />
-            <HealthIndicator />
+            <TaskStateModel />
+      <HealthIndicator />
             <ThemeToggle />
           </div>
         </div>

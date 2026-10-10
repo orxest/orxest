@@ -54,6 +54,10 @@ type WorktreeRequest struct {
 	Path           string
 	Branch         string
 	BaseBranch     string
+	// WorkspaceRoot, when set, is the Orxest-managed directory that Path must
+	// live inside. It is what stops a bad project configuration from pointing a
+	// worktree at an arbitrary host directory (spec §49).
+	WorkspaceRoot string
 	// Reuse returns the existing worktree when it is already valid.
 	Reuse bool
 	// Force discards a stale worktree occupying the path.
@@ -110,7 +114,9 @@ type Diff struct {
 type RemoveWorktreeRequest struct {
 	RepositoryPath string
 	Path           string
-	Branch         string
+	// WorkspaceRoot, when set, constrains Path to an Orxest-managed directory.
+	WorkspaceRoot string
+	Branch        string
 	// Force removes the worktree even when it has uncommitted changes.
 	Force bool
 	// DeleteBranch also deletes the task branch.
@@ -118,6 +124,10 @@ type RemoveWorktreeRequest struct {
 }
 
 // IntegrateRequest merges a completed task branch into a target branch.
+//
+// Integration never runs in the developer's checkout: the adapter prepares the
+// merge in an Orxest-managed worktree and only then advances the target branch
+// reference (spec §25).
 type IntegrateRequest struct {
 	RepositoryPath string
 	Branch         string
@@ -125,6 +135,10 @@ type IntegrateRequest struct {
 	Message        string
 	AuthorName     string
 	AuthorEmail    string
+	// IntegrationDir is the Orxest-managed directory used for the temporary
+	// integration worktree. When empty, "<repository_path>/.orxest/integration"
+	// is used.
+	IntegrationDir string
 }
 
 // IntegrateResult reports the outcome of an integration attempt.
@@ -135,4 +149,13 @@ type IntegrateResult struct {
 	MergeCommitSHA  string   `json:"merge_commit_sha,omitempty"`
 	ConflictedFiles []string `json:"conflicted_files,omitempty"`
 	UpToDate        bool     `json:"up_to_date,omitempty"`
+	// Blocked reports that integration could not be attempted safely, for
+	// example because the target branch is checked out in the developer's
+	// repository with uncommitted tracked changes. BlockedReason is the
+	// actionable explanation shown to the operator (spec §25).
+	Blocked       bool   `json:"blocked,omitempty"`
+	BlockedReason string `json:"blocked_reason,omitempty"`
+	// Warnings note conditions that did not stop integration but are worth
+	// surfacing, such as untracked files left in the checkout.
+	Warnings []string `json:"warnings,omitempty"`
 }

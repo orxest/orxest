@@ -26,7 +26,7 @@ export function RejectDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Reject task"
-      description={`“${task.title}” returns to rework with your reason attached.`}
+      description={`“${task.title}” is sent back with your reason attached.`}
       label="Reason"
       placeholder="What has to change before this can be approved?"
       value={reason}

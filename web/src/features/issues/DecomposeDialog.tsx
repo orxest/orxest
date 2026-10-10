@@ -1,7 +1,8 @@
-import { AlertTriangle, FileJson, Layers, Loader2, Sparkles } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, FileJson, Layers, Loader2, Sparkles } from 'lucide-react'
 import * as React from 'react'
 import { Link } from 'react-router-dom'
 
+import { errorMessage } from '@/api/client'
 import type { DecomposeInput } from '@/api/projects'
 import { IdChip } from '@/components/common/IdChip'
 import {
@@ -32,8 +33,10 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { useProjectActions } from '@/hooks/mutations'
+import { useTaskDetail } from '@/hooks/queries'
 import { PRIORITY_OPTIONS } from '@/lib/status'
 import { IssueField } from '@/features/issues/IssueField'
+import { PlanDraftReview } from '@/features/issues/PlanDraftReview'
 import {
   DEFAULT_AGENT_VALUE,
   parseArchitectPlanText,
@@ -70,16 +73,21 @@ function RequestField({
 
 /**
  * Decomposes a request into an issue with tasks. "Architect" queues a planning
- * execution; "Advanced" persists a pasted, validated JSON plan immediately.
+ * execution whose draft plan waits for human approval (unless the project
+ * auto-accepts plans); "Advanced" persists a pasted, validated JSON plan
+ * immediately.
  */
 export function DecomposeDialog({
   projectId,
   agents,
+  autoAcceptPlans = false,
   open,
   onOpenChange,
 }: {
   projectId: string | undefined
   agents: ProjectAgentView[]
+  /** Mirrors `project.settings.auto_accept_plans`; drives the lifecycle copy. */
+  autoAcceptPlans?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
@@ -94,6 +102,11 @@ export function DecomposeDialog({
   const [planText, setPlanText] = React.useState('')
   const [result, setResult] = React.useState<DecomposeResult | null>(null)
   const [submitError, setSubmitError] = React.useState<unknown>(null)
+
+  // Poll the queued planning task so the draft plan appears on its own once
+  // the architect execution finishes and the task parks in `review`. Polling
+  // stops when the dialog is closed.
+  const planningDetail = useTaskDetail(open ? result?.decomposition_task?.id : undefined)
 
   React.useEffect(() => {
     if (!open) return
@@ -111,6 +124,19 @@ export function DecomposeDialog({
   const planParse = React.useMemo(() => parseArchitectPlanText(planText), [planText])
   const plan = planParse.status === 'valid' ? planParse.plan : null
   const edges = plan ? planDependencyEdges(plan) : []
+
+  // The queued task object from the response goes stale immediately; prefer the
+  // polled detail so the draft plan and status update on their own.
+  const planningTask = planningDetail.data?.task ?? result?.decomposition_task
+  const planDraft = planningDetail.data?.plan_draft
+  const awaitingPlanReview =
+    planningTask?.kind === 'decomposition' &&
+    planningTask.status === 'review' &&
+    Boolean(planDraft)
+
+  const lifecycleNote = autoAcceptPlans
+    ? 'This project auto-accepts plans, so the architect’s tasks are scheduled as soon as planning finishes.'
+    : 'The architect proposes a draft plan. Nothing is scheduled until you approve it; rejecting sends it back for another planning attempt.'
 
   const maxAttemptsValid = maxAttempts.trim() === '' || /^\d+$/.test(maxAttempts.trim())
   const requestValid = request.trim().length > 0
@@ -153,11 +179,11 @@ export function DecomposeDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="size-4" />
-            Decompose with the architect
+            Plan work with the architect
           </DialogTitle>
           <DialogDescription>
-            One request becomes an issue plus concrete, verifiable tasks. The backend validates
-            every plan before anything is persisted.
+            One request becomes an issue plus concrete, verifiable tasks. The architect proposes a
+            draft; the backend validates every plan before anything is persisted.
           </DialogDescription>
         </DialogHeader>
 
@@ -169,8 +195,8 @@ export function DecomposeDialog({
               </Badge>
               <span className="text-xs text-muted-foreground">
                 {result.mode === 'architect'
-                  ? 'A decomposition task is queued. Approving it persists the plan it produces.'
-                  : 'The pasted plan was validated and persisted immediately.'}
+                  ? 'A planning task is queued. The architect only proposes a draft; nothing is scheduled until the plan is approved.'
+                  : 'The pasted plan was validated and persisted immediately; its tasks are schedulable now.'}
               </span>
             </div>
 
@@ -214,31 +240,62 @@ export function DecomposeDialog({
               </div>
             ) : null}
 
-            {result.decomposition_task ? (
-              <div className="flex flex-col gap-1.5 rounded-md border border-border p-3">
-                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Decomposition task
-                </span>
-                <div className="flex min-w-0 items-center gap-2">
-                  <Link
-                    to={`/tasks/${result.decomposition_task.id}`}
-                    className="min-w-0 flex-1 truncate text-xs font-medium hover:underline"
-                    title={result.decomposition_task.title}
-                  >
-                    {result.decomposition_task.title}
-                  </Link>
-                  <TaskStatusBadge status={result.decomposition_task.status} />
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <IdChip value={result.decomposition_task.id} />
-                  {result.workflow ? (
-                    <Badge variant="muted">workflow: {result.workflow.name}</Badge>
+            {result.mode === 'architect' && planningTask ? (
+              awaitingPlanReview && planDraft ? (
+                <PlanDraftReview task={planningTask} plan={planDraft} />
+              ) : (
+                <div className="flex flex-col gap-2 rounded-md border border-border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Planning task
+                    </span>
+                    <TaskStatusBadge status={planningTask.status} />
+                  </div>
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <Link
+                      to={`/tasks/${planningTask.id}`}
+                      className="min-w-0 flex-1 truncate text-xs font-medium hover:underline"
+                      title={planningTask.title}
+                    >
+                      {planningTask.title}
+                    </Link>
+                    <IdChip value={planningTask.id} />
+                    {result.workflow ? (
+                      <Badge variant="muted">workflow: {result.workflow.name}</Badge>
+                    ) : null}
+                  </div>
+
+                  {planningTask.status === 'done' ? (
+                    <p className="flex items-start gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="mt-px size-3 shrink-0" />
+                      <span>
+                        The plan was persisted and this issue’s tasks are now on the board.
+                      </span>
+                    </p>
+                  ) : planningTask.status === 'failed' ? (
+                    <p className="flex items-start gap-1.5 text-[11px] text-destructive">
+                      <AlertTriangle className="mt-px size-3 shrink-0" />
+                      <span>
+                        {planningTask.last_error ||
+                          'The planning execution failed. Retry it from the task detail page.'}
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      {lifecycleNote}
+                    </p>
+                  )}
+
+                  {planningDetail.error ? (
+                    <p className="text-[11px] text-destructive">
+                      Could not refresh the planning task: {errorMessage(planningDetail.error)}
+                    </p>
                   ) : null}
                 </div>
-              </div>
+              )
             ) : null}
 
-            {!result.decomposition_task && result.workflow ? (
+            {result.mode === 'direct' && result.workflow ? (
               <div className="flex items-center gap-2">
                 <Badge variant="muted">workflow: {result.workflow.name}</Badge>
               </div>

@@ -104,3 +104,14 @@ export function compactNumber(value: number): string {
   if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}k`
   return `${(value / 1_000_000).toFixed(1)}m`
 }
+
+/**
+ * Turns a role id slug (`senior-developer`) into a readable label
+ * (`Senior developer`) when no role catalogue entry is available.
+ */
+export function roleLabel(roleId: string | undefined | null): string {
+  if (!roleId) return '—'
+  const spaced = roleId.replace(/[-_.]+/g, ' ').trim()
+  if (!spaced) return roleId
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
+}

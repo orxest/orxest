@@ -51,6 +51,8 @@ func TestInterpretReportMapping(t *testing.T) {
 		{map[string]any{"status": "success"}, domain.OutcomeSuccess, domain.FailureNone},
 		{map[string]any{"status": "approved"}, domain.OutcomeSuccess, domain.FailureNone},
 		{map[string]any{"status": "changes_required"}, domain.OutcomeRework, domain.FailureReview},
+		{map[string]any{"status": "changes_requested"}, domain.OutcomeRework, domain.FailureReview},
+		{map[string]any{"status": "request_changes"}, domain.OutcomeRework, domain.FailureReview},
 		{map[string]any{"status": "blocked"}, domain.OutcomeBlocked, domain.FailurePolicy},
 		{map[string]any{"status": "cancelled"}, domain.OutcomeCancelled, domain.FailureNone},
 		{map[string]any{"status": "failure", "failure_kind": "environment_failure"}, domain.OutcomeFailure, domain.FailureEnvironment},

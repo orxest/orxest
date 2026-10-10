@@ -215,6 +215,7 @@ func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
 		{Key: "ready", Title: "Ready", Statuses: []string{string(domain.TaskReady)}},
 		{Key: "in_progress", Title: "In Progress", Statuses: []string{string(domain.TaskQueued), string(domain.TaskRunning)}},
 		{Key: "review", Title: "Review", Statuses: []string{string(domain.TaskReview)}},
+		{Key: "integration", Title: "Awaiting Integration", Statuses: []string{string(domain.TaskIntegrationPending)}},
 		{Key: "blocked", Title: "Blocked", Statuses: []string{string(domain.TaskBlocked)}},
 		{Key: "done", Title: "Done", Statuses: []string{string(domain.TaskDone)}},
 		{Key: "failed", Title: "Failed", Statuses: []string{string(domain.TaskFailed)}},

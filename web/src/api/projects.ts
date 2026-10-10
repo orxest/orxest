@@ -9,6 +9,8 @@ import type {
   Project,
   ProjectAgentView,
   ProjectImportResult,
+  RepositoryStatus,
+  RoleStaffing,
   ProjectSettings,
   ProjectStats,
   ReasoningLevel,
@@ -140,6 +142,19 @@ export const projectsApi = {
 
   listAgents: (projectId: string) =>
     request<ListResponse<ProjectAgentView>>(`/projects/${projectId}/agents`),
+
+  /** Which project agents can staff each role the workflow requires. */
+  staffing: (projectId: string) =>
+    request<ListResponse<RoleStaffing>>(`/projects/${projectId}/staffing`),
+
+  repository: (projectId: string) =>
+    request<RepositoryStatus>(`/projects/${projectId}/repository`),
+
+  ensureRepository: (projectId: string, init = false) =>
+    request<RepositoryStatus>(`/projects/${projectId}/repository/ensure`, {
+      method: 'POST',
+      query: { init },
+    }),
 
   /** Raw YAML project configuration import (the backend reads the raw body). */
   importConfig: (projectId: string, yaml: string) =>

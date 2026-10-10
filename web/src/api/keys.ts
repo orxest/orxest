@@ -17,6 +17,8 @@ export const qk = {
     ['projects', projectId, 'events', limit] as const,
   projectIssues: (projectId: string) => ['projects', projectId, 'issues'] as const,
   projectAgents: (projectId: string) => ['projects', projectId, 'agents'] as const,
+  projectStaffing: (projectId: string) => ['projects', projectId, 'staffing'] as const,
+  projectRepository: (projectId: string) => ['projects', projectId, 'repository'] as const,
   projectWorkflow: (projectId: string) => ['projects', projectId, 'workflow'] as const,
 
   issue: (issueId: string) => ['issues', issueId] as const,

@@ -66,17 +66,14 @@ assignments:
     role: reviewer
     priority: 10
 
+# Planning with the architect is a separate, feature-scoped operation; it is not
+# a mandatory step of every task. The `architect` agent above is what the
+# "Plan work with architect" action uses. Add an explicit `architecture` step
+# here only if this project genuinely wants a design stage per task.
 workflow:
-  name: standard
-  description: Architecture, implementation, testing and review with rework loops.
+  name: reviewed
+  description: Implementation, testing and agent review with a human approval gate.
   steps:
-    - name: architecture
-      role: architect
-      instructions: Produce a concrete technical design; do not implement it.
-      on_success: next
-      on_failure: retry
-      max_attempts: 2
-
     - name: implementation
       role: senior-developer
       instructions: Implement the change end to end, including tests.

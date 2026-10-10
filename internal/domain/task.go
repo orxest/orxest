@@ -22,6 +22,11 @@ const (
 	// TaskReview: a workflow step with an approval gate finished and a human
 	// decision is required.
 	TaskReview TaskStatus = "review"
+	// TaskIntegrationPending: the workflow finished successfully but the task
+	// branch has not been integrated into the target branch yet. Dependents stay
+	// blocked until integration completes, so they never start from a base that
+	// lacks their prerequisite changes (spec §25).
+	TaskIntegrationPending TaskStatus = "integration"
 	// TaskBlocked: cannot proceed (missing agent, integration conflict, ...).
 	TaskBlocked TaskStatus = "blocked"
 	// TaskFailed: the workflow concluded in failure or the retry budget is spent.
@@ -36,7 +41,7 @@ const (
 func AllTaskStatuses() []TaskStatus {
 	return []TaskStatus{
 		TaskBacklog, TaskReady, TaskQueued, TaskRunning, TaskReview,
-		TaskBlocked, TaskFailed, TaskDone, TaskCancelled,
+		TaskIntegrationPending, TaskBlocked, TaskFailed, TaskDone, TaskCancelled,
 	}
 }
 
@@ -68,15 +73,27 @@ func (s TaskStatus) IsRunnable() bool {
 // in Orxest goes through CanTransitionTask, which is what makes the board a
 // validated projection instead of an authoritative store (spec §28).
 var taskTransitions = map[TaskStatus][]TaskStatus{
-	TaskBacklog:   {TaskReady, TaskQueued, TaskBlocked, TaskCancelled},
-	TaskReady:     {TaskQueued, TaskRunning, TaskBlocked, TaskCancelled, TaskBacklog},
-	TaskQueued:    {TaskRunning, TaskReady, TaskFailed, TaskBlocked, TaskCancelled},
-	TaskRunning:   {TaskReady, TaskReview, TaskDone, TaskFailed, TaskBlocked, TaskCancelled},
-	TaskReview:    {TaskReady, TaskDone, TaskFailed, TaskBlocked, TaskCancelled},
-	TaskBlocked:   {TaskReady, TaskQueued, TaskBacklog, TaskCancelled, TaskFailed},
-	TaskFailed:    {TaskReady, TaskBacklog, TaskCancelled},
-	TaskDone:      {TaskReady},
-	TaskCancelled: {TaskBacklog, TaskReady},
+	TaskBacklog:            {TaskReady, TaskQueued, TaskBlocked, TaskCancelled},
+	TaskReady:              {TaskQueued, TaskRunning, TaskBlocked, TaskCancelled, TaskBacklog},
+	TaskQueued:             {TaskRunning, TaskReady, TaskFailed, TaskBlocked, TaskCancelled},
+	TaskRunning:            {TaskReady, TaskReview, TaskIntegrationPending, TaskDone, TaskFailed, TaskBlocked, TaskCancelled},
+	TaskReview:             {TaskReady, TaskIntegrationPending, TaskDone, TaskFailed, TaskBlocked, TaskCancelled},
+	TaskIntegrationPending: {TaskDone, TaskFailed, TaskBlocked, TaskReady, TaskCancelled},
+	TaskBlocked:            {TaskReady, TaskQueued, TaskIntegrationPending, TaskBacklog, TaskCancelled, TaskFailed, TaskDone},
+	TaskFailed:             {TaskReady, TaskBacklog, TaskCancelled},
+	TaskDone:               {TaskReady},
+	TaskCancelled:          {TaskBacklog, TaskReady},
+}
+
+// TaskTransitions returns a copy of the authoritative task state machine, so
+// clients (and the API) can render and validate transitions without
+// re-implementing the rules.
+func TaskTransitions() map[TaskStatus][]TaskStatus {
+	out := make(map[TaskStatus][]TaskStatus, len(taskTransitions))
+	for from, tos := range taskTransitions {
+		out[from] = append([]TaskStatus{}, tos...)
+	}
+	return out
 }
 
 // CanTransitionTask reports whether from -> to is a legal task transition.

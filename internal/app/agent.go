@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/orxest/orxest/internal/domain"
@@ -297,4 +298,125 @@ func (s *AgentService) UpsertAssignment(ctx context.Context, projectID, agentID,
 	return s.AssignAgent(ctx, projectID, AssignmentInput{
 		AgentID: agentID, RoleID: roleID, Enabled: &enabled, Priority: priority,
 	})
+}
+
+// --- staffing ------------------------------------------------------------
+
+// StaffingCandidate is one project agent assignment that could serve a role.
+type StaffingCandidate struct {
+	AssignmentID     string `json:"assignment_id"`
+	AgentID          string `json:"agent_id"`
+	AgentName        string `json:"agent_name"`
+	Harness          string `json:"harness"`
+	Model            string `json:"model,omitempty"`
+	Priority         int    `json:"priority"`
+	Enabled          bool   `json:"enabled"`
+	HarnessAvailable bool   `json:"harness_available"`
+	ActiveExecutions int    `json:"active_executions"`
+	MaxConcurrent    int    `json:"max_concurrent_executions"`
+	// Available reports whether the scheduler would accept this candidate right
+	// now: enabled, with a registered harness, below its concurrency limit.
+	Available bool `json:"available"`
+}
+
+// RoleStaffing explains whether a workflow step's role can be staffed in a
+// project right now. It is what lets the UI flag a missing role before a task
+// ever reaches the step, instead of discovering it after the fact.
+type RoleStaffing struct {
+	ProjectID  string              `json:"project_id"`
+	RoleID     string              `json:"role_id"`
+	RoleExists bool                `json:"role_exists"`
+	Candidates []StaffingCandidate `json:"candidates"`
+	// Selectable lists the candidate agent ids the scheduler would accept, in
+	// the deterministic order it uses: priority descending, then agent name.
+	Selectable []string `json:"selectable"`
+	// Reason is empty when at least one candidate is selectable.
+	Reason string `json:"reason,omitempty"`
+}
+
+// RoleStaffing computes the staffing picture for one role in one project.
+func (s *AgentService) RoleStaffing(ctx context.Context, projectID, roleID string) (*RoleStaffing, error) {
+	if _, err := s.deps.Store.Projects().Get(ctx, projectID); err != nil {
+		return nil, err
+	}
+	out := &RoleStaffing{ProjectID: projectID, RoleID: roleID, Candidates: []StaffingCandidate{}, Selectable: []string{}}
+	role, err := s.deps.Store.Roles().Get(ctx, roleID)
+	if err != nil {
+		out.Reason = fmt.Sprintf("role %q is not configured", roleID)
+		return out, nil
+	}
+	out.RoleExists = true
+	_ = role
+	assignments, err := s.deps.Store.Agents().ListProjectAgentsByRole(ctx, projectID, roleID)
+	if err != nil {
+		return nil, err
+	}
+	active, err := s.deps.Store.Executions().CountActiveByAgent(ctx)
+	if err != nil {
+		return nil, err
+	}
+	busy, unusable := 0, 0
+	for _, pa := range assignments {
+		_, harnessErr := s.deps.Harness(pa.Agent.Harness)
+		candidate := StaffingCandidate{
+			AssignmentID:     pa.ID,
+			AgentID:          pa.AgentID,
+			AgentName:        pa.Agent.Name,
+			Harness:          pa.Agent.Harness,
+			Model:            pa.Agent.Model,
+			Priority:         pa.Priority,
+			Enabled:          pa.Enabled && pa.Agent.Enabled,
+			HarnessAvailable: harnessErr == nil,
+			ActiveExecutions: active[pa.AgentID],
+			MaxConcurrent:    pa.Agent.EffectiveConcurrency(),
+		}
+		candidate.Available = candidate.Enabled && candidate.HarnessAvailable &&
+			candidate.ActiveExecutions < candidate.MaxConcurrent
+		if candidate.Available {
+			out.Selectable = append(out.Selectable, pa.AgentID)
+		} else if candidate.Enabled && candidate.HarnessAvailable {
+			busy++
+		} else {
+			unusable++
+		}
+		out.Candidates = append(out.Candidates, candidate)
+	}
+	switch {
+	case len(assignments) == 0:
+		out.Reason = fmt.Sprintf("no agent is assigned to role %q in this project", roleID)
+	case len(out.Selectable) == 0 && busy > 0:
+		out.Reason = fmt.Sprintf("every agent assigned to role %q is at capacity", roleID)
+	case len(out.Selectable) == 0 && unusable > 0:
+		out.Reason = fmt.Sprintf("no enabled agent with a registered harness is assigned to role %q", roleID)
+	}
+	return out, nil
+}
+
+// ProjectStaffing reports staffing for every role referenced by a project's
+// default workflow. The workflow editor uses it to flag missing roles before a
+// task reaches a step.
+func (s *AgentService) ProjectStaffing(ctx context.Context, projectID string) ([]RoleStaffing, error) {
+	workflow, err := s.deps.Store.Workflows().GetDefault(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.StaffingForWorkflow(ctx, projectID, workflow)
+}
+
+// StaffingForWorkflow is ProjectStaffing for an explicit workflow definition.
+func (s *AgentService) StaffingForWorkflow(ctx context.Context, projectID string, workflow *domain.Workflow) ([]RoleStaffing, error) {
+	seen := map[string]bool{}
+	out := []RoleStaffing{}
+	for _, step := range workflow.Steps {
+		if seen[step.RoleID] {
+			continue
+		}
+		seen[step.RoleID] = true
+		staffing, err := s.RoleStaffing(ctx, projectID, step.RoleID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *staffing)
+	}
+	return out, nil
 }

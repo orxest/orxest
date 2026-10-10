@@ -73,26 +73,82 @@ const agentConfigSchema = z.object({
   enabled: z.boolean(),
 })
 
-const newProjectSchema = z.object({
-  name: z.string().trim().min(1, 'Name is required').max(200, 'At most 200 characters'),
-  description: z.string(),
-  repository_path: z
-    .string()
-    .trim()
-    .min(1, 'Repository path is required')
-    .regex(/^\//, 'must be an absolute path'),
-  repository_url: z
-    .string()
-    .trim()
-    .refine(
-      (value) => value === '' || looksLikeUrl(value),
-      'must look like a URL (https://host/repo.git or git@host:repo.git)',
-    ),
-  target_branch: z.string().trim().min(1, 'Target branch is required'),
-  init_repository: z.boolean(),
-  workflow_template: z.string(),
-  agents: z.array(agentConfigSchema),
-})
+/**
+ * How Orxest should obtain the repository. The three modes are mutually
+ * exclusive, so the form shows only the fields that apply and never leaves the
+ * operator guessing which action will run.
+ */
+export const REPOSITORY_MODES = [
+  {
+    value: 'existing',
+    label: 'Use an existing local repository',
+    description: 'Orxest operates on a Git checkout that already exists on this host.',
+  },
+  {
+    value: 'clone',
+    label: 'Clone a repository',
+    description: 'Orxest clones the URL into the destination path on first use.',
+  },
+  {
+    value: 'new',
+    label: 'Create a new repository',
+    description:
+      'Orxest runs git init in an empty path and makes one initial commit, so worktrees can be created immediately.',
+  },
+] as const
+
+const repositoryModeSchema = z.enum(['existing', 'clone', 'new'])
+
+const newProjectSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Name is required').max(200, 'At most 200 characters'),
+    description: z.string(),
+    repository_mode: repositoryModeSchema,
+    repository_path: z
+      .string()
+      .trim()
+      .refine(
+        (value) => value === '' || value.startsWith('/'),
+        'must be an absolute path',
+      ),
+    repository_url: z
+      .string()
+      .trim()
+      .refine(
+        (value) => value === '' || looksLikeUrl(value),
+        'must look like a URL (https://host/repo.git or git@host:repo.git)',
+      ),
+    target_branch: z.string().trim().min(1, 'Target branch is required'),
+    workflow_template: z.string(),
+    agents: z.array(agentConfigSchema),
+  })
+  .superRefine((value, ctx) => {
+    if (value.repository_mode === 'clone') {
+      if (!value.repository_url) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['repository_url'],
+          message: 'A repository URL is required when cloning.',
+        })
+      }
+      if (!value.repository_path) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['repository_path'],
+          message: 'A destination path is required when cloning.',
+        })
+      }
+    } else if (!value.repository_path) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['repository_path'],
+        message:
+          value.repository_mode === 'new'
+            ? 'A path for the new repository is required.'
+            : 'The existing repository path is required.',
+      })
+    }
+  })
 
 type NewProjectForm = z.infer<typeof newProjectSchema>
 type AgentFormValues = z.infer<typeof agentConfigSchema>
@@ -104,7 +160,6 @@ const PROJECT_FIELDS = [
   'repository_path',
   'repository_url',
   'target_branch',
-  'init_repository',
   'workflow_template',
 ] as const satisfies readonly (keyof NewProjectForm)[]
 
@@ -464,10 +519,10 @@ export function NewProjectPage() {
     defaultValues: {
       name: '',
       description: '',
+      repository_mode: 'existing',
       repository_path: '',
       repository_url: '',
       target_branch: 'main',
-      init_repository: false,
       workflow_template: 'standard',
       agents: [],
     },
@@ -475,6 +530,7 @@ export function NewProjectPage() {
 
   const agents = useFieldArray({ control, name: 'agents' })
 
+  const repositoryMode = watch('repository_mode')
   const selectedTemplateName = watch('workflow_template')
   const selectedTemplate = templates.find((template) => template.name === selectedTemplateName)
 
@@ -517,9 +573,9 @@ export function NewProjectPage() {
       name: values.name.trim(),
       description: values.description.trim(),
       repository_path: values.repository_path.trim(),
-      repository_url: values.repository_url.trim(),
+      repository_url: values.repository_url.trim() || undefined,
       target_branch: values.target_branch.trim() || 'main',
-      init_repository: values.init_repository,
+      init_repository: values.repository_mode === 'new',
       workflow_template: values.workflow_template || undefined,
       agents: values.agents.map(toAgentInput),
     }
@@ -608,32 +664,56 @@ export function NewProjectPage() {
           </Field>
 
           <Field
-            label="Repository path"
+            label="Repository source"
+            htmlFor="project-repository-mode"
+            error={errors.repository_mode?.message}
+            hint={REPOSITORY_MODES.find((mode) => mode.value === repositoryMode)?.description}
+            className="sm:col-span-2"
+          >
+            <SelectField
+              control={control}
+              name="repository_mode"
+              id="project-repository-mode"
+              placeholder="Choose how Orxest gets the repository"
+              options={REPOSITORY_MODES.map((mode) => ({ value: mode.value, label: mode.label }))}
+            />
+          </Field>
+
+          {repositoryMode === 'clone' ? (
+            <Field
+              label="Repository URL"
+              htmlFor="project-repository-url"
+              error={errors.repository_url?.message}
+              hint="Orxest clones this URL into the destination path when it does not exist yet."
+            >
+              <Input
+                id="project-repository-url"
+                className="font-mono"
+                placeholder="https://github.com/org/repo.git"
+                aria-invalid={Boolean(errors.repository_url)}
+                {...register('repository_url')}
+              />
+            </Field>
+          ) : null}
+
+          <Field
+            label={repositoryMode === 'clone' ? 'Clone destination' : 'Repository path'}
             htmlFor="project-repository-path"
             error={errors.repository_path?.message}
-            hint="Absolute path on the Orxest host, for example /srv/git/payments."
+            hint={
+              repositoryMode === 'new'
+                ? 'A new Git repository (with one initial commit) is created here.'
+                : 'Absolute path on the Orxest host, for example /srv/git/payments.'
+            }
           >
             <Input
               id="project-repository-path"
               className="font-mono"
-              placeholder="/srv/git/payments"
+              placeholder={
+                repositoryMode === 'new' ? '/srv/git/payments' : '/srv/git/payments'
+              }
               aria-invalid={Boolean(errors.repository_path)}
               {...register('repository_path')}
-            />
-          </Field>
-
-          <Field
-            label="Repository URL"
-            htmlFor="project-repository-url"
-            error={errors.repository_url?.message}
-            hint="Optional. Used for clones, links and provenance."
-          >
-            <Input
-              id="project-repository-url"
-              className="font-mono"
-              placeholder="https://github.com/org/repo.git"
-              aria-invalid={Boolean(errors.repository_url)}
-              {...register('repository_url')}
             />
           </Field>
 
@@ -652,20 +732,13 @@ export function NewProjectPage() {
             />
           </Field>
 
-          <div className="flex items-end pb-1">
-            <Controller
-              control={control}
-              name="init_repository"
-              render={({ field }) => (
-                <CheckboxField
-                  label="Initialise a new repository"
-                  description="When the path does not exist yet, create a new Git repository there and make an initial commit."
-                  checked={field.value}
-                  onChange={(event) => field.onChange(event.target.checked)}
-                />
-              )}
-            />
-          </div>
+          {repositoryMode === 'existing' ? (
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              Orxest verifies the path is a Git checkout when the project is created. If it is
+              not usable, the project is created in an explicit unconfigured state with a clear
+              action to fix it.
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 

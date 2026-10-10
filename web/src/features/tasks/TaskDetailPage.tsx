@@ -4,6 +4,9 @@ import {
   ChevronRight,
   Eye,
   FileText,
+  GitMerge,
+  Wrench,
+  Layers,
   OctagonAlert,
   Pencil,
   RotateCw,
@@ -26,6 +29,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { TaskActionsMenu } from '@/features/board/TaskActionsMenu'
 import { ExecutionLogViewer } from '@/features/executions/ExecutionLogViewer'
 import { RawLogDialog } from '@/features/executions/RawLogDialog'
+import { PlanDraftReview } from '@/features/issues/PlanDraftReview'
+import { AgentSelectionCard } from '@/features/tasks/AgentSelectionCard'
 import { CurrentExecutionCard } from '@/features/tasks/CurrentExecutionCard'
 import { EditTaskDialog } from '@/features/tasks/EditTaskDialog'
 import { ExecutionHistoryTable } from '@/features/tasks/ExecutionHistoryTable'
@@ -33,6 +38,7 @@ import { TaskDependenciesCard } from '@/features/tasks/TaskDependenciesCard'
 import { TaskEventsTimeline } from '@/features/tasks/TaskEventsTimeline'
 import { TaskSummaryPanel } from '@/features/tasks/TaskSummaryPanel'
 import { WorkflowProgress } from '@/features/tasks/WorkflowProgress'
+import { useTaskActions } from '@/hooks/mutations'
 import { useProjectAgents, useTaskDetail } from '@/hooks/queries'
 import { useNow } from '@/hooks/useNow'
 import {
@@ -43,6 +49,7 @@ import {
   shortId,
   truncate,
 } from '@/lib/format'
+import { taskActions } from '@/lib/status'
 import type { ExecutionStatus, TaskDetail } from '@/types'
 
 const LIVE_STATUSES: ExecutionStatus[] = ['pending', 'starting', 'running']
@@ -108,6 +115,7 @@ export function TaskDetailPage() {
   const detail = useTaskDetail(taskId)
   const projectId = detail.data?.task.project_id
   const agents = useProjectAgents(projectId)
+  const actions = useTaskActions()
 
   const [editOpen, setEditOpen] = React.useState(false)
   const [rawLogOpen, setRawLogOpen] = React.useState(false)
@@ -154,6 +162,11 @@ export function TaskDetailPage() {
 
   const maxAttempts = task.max_attempts > 0 ? String(task.max_attempts) : '∞'
   const workflowSteps = (workflow?.steps ?? []).map((step) => step.name)
+  const planDraft = data.plan_draft
+  const taskActionState = taskActions(task.status, task.failure_kind)
+  const canIntegrate = taskActionState.canIntegrate
+  const canResolveConflict = taskActionState.canResolveConflict
+  const busy = actions.isBusy(task.id)
 
   const activeExecution = current_execution ?? executions[0]
   const isLive = activeExecution ? LIVE_STATUSES.includes(activeExecution.status) : false
@@ -226,6 +239,28 @@ export function TaskDetailPage() {
         }
         actions={
           <>
+            {canResolveConflict ? (
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => actions.resolveConflict.mutate(task.id)}
+                title="Send this task back to a coding agent to resolve the merge conflict"
+              >
+                <Wrench className="size-3.5" />
+                Resolve conflict with agent
+              </Button>
+            ) : null}
+            {canIntegrate ? (
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => actions.integrate.mutate(task.id)}
+                title="Integrate this task's branch into the target branch"
+              >
+                <GitMerge className="size-3.5" />
+                Integrate
+              </Button>
+            ) : null}
             <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
               <Pencil className="size-3.5" />
               Edit
@@ -280,11 +315,34 @@ export function TaskDetailPage() {
         <Alert variant="info">
           <Eye />
           <div>
-            <AlertTitle>Waiting for a human decision</AlertTitle>
+            <AlertTitle>
+              {planDraft ? 'Draft plan awaiting approval' : 'Waiting for a human decision'}
+            </AlertTitle>
             <AlertDescription>
-              This task reached {data.current_step?.approval_gate ? 'an approval gate' : 'a review step'}
-              {data.current_step ? ` (“${data.current_step.name}”)` : ''}. Approve it to continue or
-              reject it with a reason.
+              {planDraft ? (
+                'The architect finished planning. Approve the draft plan to persist the issue’s tasks, or reject it with a reason so the architect tries again.'
+              ) : (
+                <>
+                  This task reached{' '}
+                  {data.current_step?.approval_gate ? 'an approval gate' : 'a review step'}
+                  {data.current_step ? ` (“${data.current_step.name}”)` : ''}. Approve it to continue
+                  or reject it with a reason.
+                </>
+              )}
+            </AlertDescription>
+          </div>
+        </Alert>
+      ) : null}
+
+      {task.status === 'integration' ? (
+        <Alert variant="warning">
+          <GitMerge />
+          <div>
+            <AlertTitle>Waiting for Git integration</AlertTitle>
+            <AlertDescription>
+              The workflow finished, but this task’s branch has not been integrated into{' '}
+              <span className="font-mono">{project?.target_branch || 'the target branch'}</span> yet.
+              Dependent tasks stay blocked until you integrate it.
             </AlertDescription>
           </div>
         </Alert>
@@ -319,9 +377,31 @@ export function TaskDetailPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
         <div className="flex min-w-0 flex-col gap-4">
+          {planDraft && task.status === 'review' ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Layers className="size-3.5 text-muted-foreground" />
+                  Draft plan awaiting approval
+                </CardTitle>
+                <CardDescription>
+                  The architect proposed this plan for the issue. Approve it to persist the tasks, or
+                  reject it with a reason to send it back.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <PlanDraftReview task={task} plan={planDraft} />
+              </CardContent>
+            </Card>
+          ) : null}
           <TaskSummaryPanel detail={detailData} now={now} />
           <WorkflowProgress detail={detailData} />
           <CurrentExecutionCard detail={detailData} />
+          <AgentSelectionCard
+            selection={data.agent_selection}
+            roleName={data.current_role?.name ?? data.current_step?.role}
+            currentAgentName={data.current_agent?.name}
+          />
           <TaskDependenciesCard detail={detailData} />
           <ExecutionHistoryTable executions={executions} />
 

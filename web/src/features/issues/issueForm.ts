@@ -165,12 +165,44 @@ export function issueTaskFormToInput(values: IssueTaskFormValues): CreateIssueTa
 /* Architect plan (advanced decompose)                                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Acceptance criteria arrive either as one string (the canonical shape) or as a
+ * list of strings, which is what agents usually produce. Both are accepted and
+ * normalised to the string the API expects; the backend does the same, so a
+ * pasted agent plan is not rejected over shape alone.
+ */
+const acceptanceCriteria = z
+  .union([z.string(), z.array(z.string())])
+  .transform((value) =>
+    Array.isArray(value) ? value.map((item) => item.trim()).filter(Boolean).join('\n') : value,
+  )
+  .pipe(z.string().trim().min(1, 'Every task needs acceptance criteria.'))
+
+/** `ref` may also be labelled id/key/task_id by the agent that produced the plan. */
+const taskRef = z
+  .object({
+    ref: z.string().optional(),
+    id: z.string().optional(),
+    key: z.string().optional(),
+    task_id: z.string().optional(),
+  })
+  .transform((value) => value.ref ?? value.id ?? value.key ?? value.task_id ?? '')
+  .pipe(z.string().trim().min(1, 'Every task needs a ref.'))
+
+/** A bare dependency id is treated as a single-element list. */
+const dependencyList = z
+  .union([z.array(z.string()), z.string()])
+  .optional()
+  .transform((value) =>
+    value === undefined ? undefined : Array.isArray(value) ? value : [value],
+  )
+
 const architectTaskSchema = z.object({
-  ref: z.string().trim().min(1, 'Every task needs a ref.'),
+  ref: taskRef,
   title: z.string().trim().min(1, 'Every task needs a title.'),
   description: z.string().trim().min(1, 'Every task needs a description.'),
-  acceptance_criteria: z.string().trim().min(1, 'Every task needs acceptance criteria.'),
-  depends_on: z.array(z.string()).optional(),
+  acceptance_criteria: acceptanceCriteria,
+  depends_on: dependencyList,
   priority: z.number().int().min(0).max(3).optional(),
   labels: z.array(z.string()).optional(),
   estimated_complexity: z.enum(['low', 'medium', 'high']).optional(),
@@ -188,7 +220,12 @@ export const architectPlanSchema = z
       description: z.string().trim().min(1, 'The issue needs a description.'),
       priority: z.number().int().min(0).max(3).optional(),
       labels: z.array(z.string()).optional(),
-      acceptance_criteria: z.string().optional(),
+      acceptance_criteria: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .transform((value) =>
+          Array.isArray(value) ? value.map((item) => item.trim()).filter(Boolean).join('\n') : value,
+        ),
     }),
     tasks: z.array(architectTaskSchema).min(1, 'A plan needs at least one task.'),
     notes: z.string().optional(),

@@ -109,6 +109,8 @@ func schemaTypes() map[string]any {
 		"DecomposeInput":     app.DecomposeInput{},
 		"DecomposeResult":    app.DecomposeResult{},
 		"ProjectStats":       app.ProjectStats{},
+		"RoleStaffing":       app.RoleStaffing{},
+		"StaffingCandidate":  app.StaffingCandidate{},
 		"ConfigImportResult": app.ConfigImportResult{},
 		"ProjectBundle":      app.ProjectBundle{},
 	}
@@ -225,7 +227,7 @@ func queryParam(name, description string) specParam {
 func buildPaths() map[string]any {
 	routes := []specRoute{
 		{Method: "get", Path: "/api/health", Summary: "Service health and version", Tag: "system", Response: "object"},
-		{Method: "get", Path: "/api/meta", Summary: "Deployment metadata: harnesses, roles, templates, limits", Tag: "system", Response: "object"},
+		{Method: "get", Path: "/api/meta", Summary: "Deployment metadata: harnesses, roles, templates, limits and the task state machine", Tag: "system", Response: "object"},
 		{Method: "get", Path: "/api/openapi.json", Summary: "This document", Tag: "system", Response: "object"},
 		{Method: "get", Path: "/api/scheduler", Summary: "Scheduler status and concurrency accounting", Tag: "system", Response: "object"},
 		{Method: "post", Path: "/api/scheduler/tick", Summary: "Run one scheduling pass immediately", Tag: "system", Response: "object"},
@@ -242,7 +244,7 @@ func buildPaths() map[string]any {
 		{Method: "get", Path: "/api/projects/{id}/repository", Summary: "Repository status", Tag: "projects", Response: "object", Params: []specParam{pathParam("id", "Project id")}},
 		{Method: "post", Path: "/api/projects/{id}/repository/ensure", Summary: "Prepare or re-check the repository", Tag: "projects", Response: "object", Params: []specParam{pathParam("id", "Project id"), queryParam("init", "Initialise a new repository when missing")}},
 		{Method: "post", Path: "/api/projects/{id}/config", Summary: "Apply a YAML configuration file to a project", Tag: "projects", Body: "string", Response: "ConfigImportResult", Params: []specParam{pathParam("id", "Project id")}},
-		{Method: "post", Path: "/api/projects/{id}/decompose", Summary: "Architect-driven decomposition into issues and tasks", Tag: "projects", Body: "DecomposeInput", Response: "DecomposeResult", Params: []specParam{pathParam("id", "Project id")}},
+		{Method: "post", Path: "/api/projects/{id}/decompose", Summary: "Plan work with the architect: create a decomposition task whose validated output becomes a draft plan", Tag: "projects", Body: "DecomposeInput", Response: "DecomposeResult", Params: []specParam{pathParam("id", "Project id")}},
 		{Method: "get", Path: "/api/projects/{id}/dependencies", Summary: "Task dependency edges", Tag: "projects", Response: "object", Params: []specParam{pathParam("id", "Project id")}},
 
 		{Method: "get", Path: "/api/projects/{id}/issues", Summary: "List issues", Tag: "issues", Response: "List<Issue>", Params: []specParam{pathParam("id", "Project id"), queryParam("status", "Filter by status")}},
@@ -263,8 +265,10 @@ func buildPaths() map[string]any {
 		{Method: "post", Path: "/api/tasks/{id}/start", Summary: "Make a task eligible for execution", Tag: "tasks", Response: "Task", Params: []specParam{pathParam("id", "Task id")}},
 		{Method: "post", Path: "/api/tasks/{id}/retry", Summary: "Retry a failed or blocked task", Tag: "tasks", Body: "RetryInput", Response: "Task", Params: []specParam{pathParam("id", "Task id")}},
 		{Method: "post", Path: "/api/tasks/{id}/cancel", Summary: "Cancel a task and its running execution", Tag: "tasks", Response: "Task", Params: []specParam{pathParam("id", "Task id")}},
-		{Method: "post", Path: "/api/tasks/{id}/approve", Summary: "Approve the work of an approval gate step", Tag: "tasks", Response: "Task", Params: []specParam{pathParam("id", "Task id")}},
-		{Method: "post", Path: "/api/tasks/{id}/reject", Summary: "Reject the work of an approval gate step (rework)", Tag: "tasks", Body: "object", Response: "Task", Params: []specParam{pathParam("id", "Task id")}},
+		{Method: "post", Path: "/api/tasks/{id}/approve", Summary: "Approve an approval gate step or a draft architect plan (body {plan} approves an edited plan)", Tag: "tasks", Body: "object", Response: "Task", Params: []specParam{pathParam("id", "Task id")}},
+		{Method: "post", Path: "/api/tasks/{id}/integrate", Summary: "Integrate a task parked in the integration-pending state", Tag: "tasks", Response: "Task", Params: []specParam{pathParam("id", "Task id")}},
+		{Method: "post", Path: "/api/tasks/{id}/resolve-conflict", Summary: "Send a task blocked by an integration conflict back to an agent to resolve the merge", Tag: "tasks", Response: "Task", Params: []specParam{pathParam("id", "Task id")}},
+		{Method: "post", Path: "/api/tasks/{id}/reject", Summary: "Reject an approval gate step or a draft plan (rework)", Tag: "tasks", Body: "object", Response: "Task", Params: []specParam{pathParam("id", "Task id")}},
 		{Method: "post", Path: "/api/tasks/{id}/reassign", Summary: "Point the next execution at a specific agent", Tag: "tasks", Body: "object", Response: "Task", Params: []specParam{pathParam("id", "Task id")}},
 		{Method: "post", Path: "/api/tasks/{id}/move", Summary: "Explicit operator move (status and/or workflow step)", Tag: "tasks", Body: "MoveInput", Response: "Task", Params: []specParam{pathParam("id", "Task id")}},
 		{Method: "post", Path: "/api/tasks/{id}/dependencies", Summary: "Add a dependency edge", Tag: "tasks", Body: "object", Response: "Task", Params: []specParam{pathParam("id", "Task id")}},
@@ -285,6 +289,7 @@ func buildPaths() map[string]any {
 		{Method: "get", Path: "/api/roles", Summary: "List roles", Tag: "agents", Response: "List<Role>"},
 		{Method: "post", Path: "/api/roles", Summary: "Create a role", Tag: "agents", Body: "RoleInput", Response: "Role"},
 		{Method: "get", Path: "/api/projects/{id}/agents", Summary: "List the agents assigned in a project", Tag: "agents", Response: "List<ProjectAgentView>", Params: []specParam{pathParam("id", "Project id")}},
+		{Method: "get", Path: "/api/projects/{id}/staffing", Summary: "Which project agents can serve each role the workflow requires", Tag: "agents", Response: "List<RoleStaffing>", Params: []specParam{pathParam("id", "Project id")}},
 		{Method: "post", Path: "/api/projects/{id}/agents", Summary: "Assign an agent to a role in a project", Tag: "agents", Body: "AssignmentInput", Response: "ProjectAgent", Params: []specParam{pathParam("id", "Project id")}},
 		{Method: "patch", Path: "/api/projects/{id}/agents/{assignmentId}", Summary: "Update a project agent assignment", Tag: "agents", Body: "AssignmentInput", Response: "ProjectAgent", Params: []specParam{pathParam("id", "Project id"), pathParam("assignmentId", "Assignment id")}},
 		{Method: "delete", Path: "/api/projects/{id}/agents/{assignmentId}", Summary: "Remove a project agent assignment", Tag: "agents", Response: "object", Params: []specParam{pathParam("id", "Project id"), pathParam("assignmentId", "Assignment id")}},

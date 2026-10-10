@@ -6,10 +6,28 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/orxest/orxest/internal/domain"
 	"github.com/orxest/orxest/internal/domain/repository"
+)
+
+// Decomposition plan files. Every decomposition prompt asks the architect to
+// write the plan here in addition to returning it, which makes planning work
+// even on harnesses that cannot enforce a structured final message.
+const (
+	// PlanDirRelativePath is the directory the architect writes into.
+	PlanDirRelativePath = "decomposition"
+	// PlanFileRelativePath is the machine-readable plan Orxest falls back to.
+	PlanFileRelativePath = PlanDirRelativePath + "/plan.json"
+)
+
+// Plan sources, recorded so an operator can see where a draft came from.
+const (
+	PlanSourceMessage = "agent-message"
+	PlanSourceFile    = PlanFileRelativePath
 )
 
 // Planner owns architect-driven decomposition (spec §16, §44): turning a
@@ -208,18 +226,46 @@ func (p *Planner) ensurePlanningWorkflow(ctx context.Context, project *domain.Pr
 }
 
 // ParsePlan extracts and validates the architect plan from an execution result.
+// It accepts the plan as the result itself or nested one level deep (for example
+// `{"plan": {...}}`), because harnesses wrap the final message differently.
 func (p *Planner) ParsePlan(exec *domain.Execution) (*domain.ArchitectPlan, error) {
 	if exec == nil || len(exec.Result) == 0 {
 		return nil, errors.New("the architect produced no structured output")
 	}
-	raw := exec.Result
-	if nested, ok := raw["plan"].(map[string]any); ok {
-		raw = nested
+	return planFromObject(exec.Result)
+}
+
+// planFromObject validates the first plan-shaped object it can build from raw,
+// including the values of raw when the harness wrapped the plan.
+func planFromObject(raw map[string]any) (*domain.ArchitectPlan, error) {
+	candidates := []map[string]any{raw}
+	for _, value := range raw {
+		if nested, ok := value.(map[string]any); ok {
+			candidates = append(candidates, nested)
+		}
 	}
-	data, err := json.Marshal(raw)
-	if err != nil {
-		return nil, fmt.Errorf("encoding architect output: %w", err)
+	var firstErr error
+	for _, candidate := range candidates {
+		data, err := json.Marshal(candidate)
+		if err != nil {
+			continue
+		}
+		plan, err := decodePlan(data)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		return plan, nil
 	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return nil, errors.New("the architect output has no issue/tasks shape")
+}
+
+func decodePlan(data []byte) (*domain.ArchitectPlan, error) {
 	var plan domain.ArchitectPlan
 	if err := json.Unmarshal(data, &plan); err != nil {
 		return nil, fmt.Errorf("decoding architect output: %w", err)
@@ -228,6 +274,122 @@ func (p *Planner) ParsePlan(exec *domain.Execution) (*domain.ArchitectPlan, erro
 		return nil, err
 	}
 	return &plan, nil
+}
+
+// ResolvePlan returns the architect plan for an execution and the source it came
+// from, trying every place a decomposition agent may have put it:
+//
+//  1. the structured result the harness parsed from the final message;
+//  2. <task worktree>/decomposition/plan.json;
+//  3. <project repository>/decomposition/plan.json, because agents sometimes
+//     write the plan next to the repository rather than inside their worktree.
+//
+// Every source is validated; agent output is untrusted whichever path it took.
+func (p *Planner) ResolvePlan(exec *domain.Execution, worktreePath, repositoryPath string) (*domain.ArchitectPlan, string, error) {
+	messageErr := error(nil)
+	if plan, err := p.ParsePlan(exec); err == nil {
+		return plan, PlanSourceMessage, nil
+	} else {
+		messageErr = err
+	}
+
+	roots := make([]string, 0, 2)
+	for _, root := range []string{worktreePath, repositoryPath} {
+		cleaned := filepath.Clean(strings.TrimSpace(root))
+		if strings.TrimSpace(root) == "" || !filepath.IsAbs(cleaned) {
+			continue
+		}
+		if len(roots) == 1 && roots[0] == cleaned {
+			continue
+		}
+		roots = append(roots, cleaned)
+	}
+	if len(roots) == 0 {
+		return nil, "", fmt.Errorf("the agent returned no plan JSON and the execution has no workspace to read %s from (%w)", PlanFileRelativePath, messageErr)
+	}
+
+	attempts := make([]string, 0, len(roots))
+	for _, root := range roots {
+		plan, path, err := readPlanFile(root)
+		if err == nil {
+			return plan, path, nil
+		}
+		attempts = append(attempts, err.Error())
+	}
+	return nil, "", fmt.Errorf("%s (%w)", strings.Join(attempts, "; "), messageErr)
+}
+
+// readPlanFile reads and validates the plan file a decomposition agent was asked
+// to write, refusing any path outside root. It returns the absolute path it read
+// so the operator can see exactly which file was used.
+func readPlanFile(root string) (*domain.ArchitectPlan, string, error) {
+	path := filepath.Join(root, filepath.FromSlash(PlanFileRelativePath))
+	if !strings.HasPrefix(path, root+string(filepath.Separator)) {
+		return nil, "", errors.New("refusing to read a plan file outside the project workspace")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, path, fmt.Errorf("no plan file at %s", path)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, path, fmt.Errorf("decoding %s: %w", path, err)
+	}
+	plan, err := planFromObject(raw)
+	if err != nil {
+		return nil, path, fmt.Errorf("%s is not a valid plan: %w", path, err)
+	}
+	return plan, path, nil
+}
+
+// RecordPlan stores the resolved plan on its execution. Approval then re-reads
+// the plan from one place regardless of which harness produced it or which
+// fallback was used.
+func (p *Planner) RecordPlan(ctx context.Context, exec *domain.Execution, plan *domain.ArchitectPlan) error {
+	if exec == nil || plan == nil {
+		return nil
+	}
+	data, err := json.Marshal(plan)
+	if err != nil {
+		return err
+	}
+	var object map[string]any
+	if err := json.Unmarshal(data, &object); err != nil {
+		return err
+	}
+	exec.Result = map[string]any{"plan": object}
+	return p.deps.Store.Executions().Update(ctx, exec)
+}
+
+// DraftPlan returns the validated plan a decomposition task is waiting for a
+// human to approve. The plan itself lives on the architect execution, so a
+// draft is never duplicated into a second store that could drift.
+func (p *Planner) DraftPlan(ctx context.Context, task *domain.Task) (*domain.ArchitectPlan, error) {
+	if task == nil {
+		return nil, domain.Invalidf("task", "must not be nil")
+	}
+	var exec *domain.Execution
+	if task.CurrentExecutionID != "" {
+		if found, err := p.deps.Store.Executions().Get(ctx, task.CurrentExecutionID); err == nil {
+			exec = found
+		}
+	}
+	if exec == nil {
+		execs, err := p.deps.Store.Executions().List(ctx, repository.ExecutionFilter{TaskID: task.ID, Limit: 1})
+		if err != nil {
+			return nil, err
+		}
+		if len(execs) == 0 {
+			return nil, domain.NotFoundf("no architect execution for task %s", task.ID)
+		}
+		exec = &execs[0]
+	}
+	repoPath := ""
+	if project, err := p.deps.Store.Projects().Get(ctx, task.ProjectID); err == nil {
+		repoPath = project.RepositoryPath
+	}
+	plan, _, err := p.ResolvePlan(exec, task.WorkspacePath, repoPath)
+	return plan, err
 }
 
 // PersistPlan writes a validated plan as project state and returns the created

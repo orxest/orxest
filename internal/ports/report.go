@@ -14,11 +14,16 @@ import (
 // end its final message with a single JSON object:
 //
 //	{
-//	  "status": "success" | "failure" | "changes_required" | "blocked",
+//	  "status": "success" | "failure" | "changes_requested" | "blocked",
 //	  "summary": "one short paragraph",
 //	  "failure_kind": "agent_failure" | "task_failure" | "environment_failure",
 //	  "evidence": ["command and result"], "changed_files": ["path"], "notes": "..."
 //	}
+//
+// Review stages use "approved" (equivalent to success) and "changes_requested"
+// (equivalent to a rework request). Both spellings are accepted so that the
+// documented review vocabulary and the generic workflow vocabulary cannot
+// diverge.
 //
 // Because the contract lives here rather than in an adapter, adding a harness
 // (Codex, Pi, …) never changes how Orxest interprets an outcome: the adapter
@@ -64,7 +69,7 @@ func InterpretReport(report map[string]any, fallbackText string) (domain.Executi
 	switch status {
 	case "success", "succeeded", "pass", "passed", "ok", "completed", "approved", "done":
 		return domain.OutcomeSuccess, domain.FailureNone, summary
-	case "changes_required", "change_required", "rework", "request_changes", "review_failed", "needs_changes":
+	case "changes_requested", "changes_required", "change_required", "rework", "request_changes", "review_failed", "needs_changes":
 		return domain.OutcomeRework, domain.FailureReview, summary
 	case "blocked", "needs_input", "needs_help":
 		return domain.OutcomeBlocked, domain.FailurePolicy, summary

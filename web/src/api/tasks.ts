@@ -1,5 +1,5 @@
 import { request } from '@/api/client'
-import type { ListResponse, OrxestEvent, Task, TaskDetail } from '@/types'
+import type { ArchitectPlan, ListResponse, OrxestEvent, Task, TaskDetail } from '@/types'
 
 export interface RetryTaskInput {
   reset_attempts?: boolean
@@ -39,7 +39,19 @@ export const tasksApi = {
 
   cancel: (taskId: string) => request<Task>(`/tasks/${taskId}/cancel`, { method: 'POST' }),
 
-  approve: (taskId: string) => request<Task>(`/tasks/${taskId}/approve`, { method: 'POST' }),
+  /** Approve an approval gate step, or a draft plan (pass an edited plan to override it). */
+  approve: (taskId: string, plan?: ArchitectPlan) =>
+    request<Task>(`/tasks/${taskId}/approve`, {
+      method: 'POST',
+      body: plan ? { plan } : {},
+    }),
+
+  /** Integrate a task parked in the "integration" state (auto_integrate off). */
+  integrate: (taskId: string) => request<Task>(`/tasks/${taskId}/integrate`, { method: 'POST' }),
+
+  /** Hand a merge conflict back to a coding agent to resolve. */
+  resolveConflict: (taskId: string) =>
+    request<Task>(`/tasks/${taskId}/resolve-conflict`, { method: 'POST' }),
 
   reject: (taskId: string, reason: string) =>
     request<Task>(`/tasks/${taskId}/reject`, { method: 'POST', body: { reason } }),

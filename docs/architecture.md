@@ -121,11 +121,58 @@ Outcome mapping (from the agent's structured report, see §4):
 
 | Report status | Outcome | Transition |
 | --- | --- | --- |
-| `success` | success | `on_success` (or `review` when the step is an approval gate) |
+| `success` / `approved` | success | `on_success` (or `review` when the step is an approval gate) |
 | `failure` | failure | `on_failure` |
-| `changes_required` | rework | `on_rework` |
+| `changes_requested` (also `changes_required`) | rework | `on_rework` |
 | `blocked` | blocked | task becomes `blocked`, failure kind `policy_failure` |
 | `cancelled` | cancelled | task returns to `ready` unless a human cancelled it |
+
+### Decomposition output contract
+
+A decomposition task is the one place where the agent's final message is **not**
+an execution report: the plan JSON *is* the result. The prompt therefore asks for
+exactly one output (`domain.ArchitectPlan` — `issue` plus `tasks` with `ref`,
+`title`, `description`, `acceptance_criteria` and optional `depends_on`) and
+deliberately omits the generic `status`/`summary` report contract, because asking
+for both made harnesses without structured-output support answer with the report.
+
+Two safeguards keep planning working across adapters:
+
+- the JSON Schema is embedded in the prompt, so a harness that cannot enforce
+  structured output (Pi, fake) still knows the shape. Codex additionally
+  receives it as `--output-schema`;
+- the agent is asked to also write the identical JSON to
+  `decomposition/plan.json`. `Planner.ResolvePlan` reads the session result
+  first, then that file in the task worktree, then the same relative path beside
+  the project repository — agents often write planning documents next to the
+  repository rather than inside their worktree. Whichever source wins is
+  validated, recorded as the plan's origin, and normalised onto the execution so
+  approval reads it from one place.
+
+Decoding is tolerant about shape, not about meaning: task labels `ref`, `id`,
+`key` and `task_id` are equivalent, acceptance criteria may be a string or a list
+of strings, and a bare `depends_on` id is treated as a one-element list. The
+semantic rules (required fields, unique refs, known dependency refs, acyclicity)
+are unchanged and still enforced.
+
+Agent output is untrusted in every path: both the message and the file go through
+`domain.ValidateArchitectPlan` (required fields, unique refs, known dependency
+refs, acyclicity) before anything is persisted.
+
+### Recovering from an integration conflict
+
+A conflict is an explicit, recoverable state rather than a silent failure: the
+merge is aborted in an Orxest-managed worktree, the target branch is untouched,
+the task branch keeps its commits, and the task is blocked with the conflicted
+files. From there an operator can either resolve it by hand and integrate again,
+or hand it back to a coding agent with `POST /api/tasks/{id}/resolve-conflict`.
+
+The agent path routes the task to the step that reworks it (`ResolveRework` of the
+step it stopped at, falling back to the workflow's first step). Because the
+preceding execution is recorded with failure kind `integration_conflict`,
+`BuildPrompt` renders an explicit resolution section — merge the target branch,
+keep both sides' intent, re-run the checks, commit the merge — and softens the
+generic "do not merge" workspace rule for exactly that one merge.
 
 ## 4. Harness boundary
 

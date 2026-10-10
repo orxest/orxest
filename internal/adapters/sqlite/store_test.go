@@ -403,7 +403,7 @@ func TestOrchestrationEventsAndWorkflows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading workflow: %v", err)
 	}
-	if len(loaded.Steps) != 4 || loaded.Steps[0].Name != "architecture" {
+	if len(loaded.Steps) != 3 || loaded.Steps[0].Name != "implementation" {
 		t.Fatalf("unexpected workflow %+v", loaded)
 	}
 	// Replacing the definition replaces its steps.

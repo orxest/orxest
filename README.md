@@ -21,9 +21,15 @@ Project
 > **Agents perform work. Orxest decides how work moves through the system.**
 
 A task has no permanent role, agent or model: the workflow decides which role is
-required at each stage, and Orxest selects an agent configured for that role.
-Each attempt runs in its own Git worktree and is preserved forever as an
-execution.
+required at each stage, and Orxest selects an agent configured for that role
+(multiple agents in one role are alternative workers, chosen deterministically
+by priority and availability — not by task complexity).
+
+Each **task** owns one Git branch and one worktree. Sequential executions and
+rework for the same task share that workspace, so later stages see earlier
+changes; different tasks never share one. Every execution is an append-only
+history record with its own agent, model and outcome, persisted in SQLite (the
+history is lost if the database is deleted).
 
 - Full specification: [`orxest-implementation-spec.md`](orxest-implementation-spec.md)
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
@@ -49,6 +55,9 @@ make build
 # -> http://127.0.0.1:8787
 
 # 3. Configure at least one agent, then create a project in the web UI.
+
+# 4. Create an issue (manual tasks) or use "Plan work with architect" to turn a
+#    feature request into a validated, reviewable issue/task graph.
 ```
 
 Orxest needs agents to do anything. An agent configuration combines a harness, a
@@ -122,13 +131,13 @@ it; Orxest commits the work on its behalf so integration is still exercised.
 | Roles, reusable agent configurations, per-project role assignment | yes |
 | Configurable workflows with success/failure/rework transitions and approval gates | yes |
 | Deterministic dependency-aware scheduler with global/project/agent concurrency limits | yes |
-| Isolated Git worktree + branch per task, safe cleanup | yes |
+| One Git worktree + branch per task, non-destructive integration, safe cleanup | yes |
 | Harness adapters: Codex and Pi (JSON streaming, structured output, cancellation, timeouts, token/cost capture) | yes |
 | Append-only execution history and per-execution event log | yes |
 | Retry budgets, rework loops, review approval/rejection, human control actions | yes |
 | Clean-merge integration with an explicit conflict state | yes |
 | REST API + SSE streams + generated OpenAPI document | yes |
-| Architect-driven decomposition into issues/tasks/dependencies (validated JSON) | yes |
+| Architect-driven planning: a validated issue/task/dependency draft you approve or reject | yes |
 | Web UI: dashboard, board, task view, execution/log view, agents, workflows | yes |
 | Optional decision provider (disabled by default, deterministic policies) | yes |
 | GitHub/PR integration, cost optimisation, more harness adapters | planned (phase 2) |
@@ -142,10 +151,12 @@ internal/domain/repository/  persistence contracts
 internal/ports/              harness, Git and decision provider boundaries
 internal/app/                application services: projects, tasks, workflow engine,
                              scheduler, executions, planner
-internal/adapters/codex/     Codex harness adapter
-internal/adapters/git/       Git worktree and integration adapter
-internal/adapters/sqlite/    explicit SQL persistence + migrator
+internal/adapters/codex/     Codex harness adapter (reference adapter)
+internal/adapters/pi/        Pi harness adapter
 internal/adapters/fake/      deterministic scriptable harness
+internal/adapters/childproc/ child-process supervision shared by harness adapters
+internal/adapters/git/       Git worktree and non-destructive integration adapter
+internal/adapters/sqlite/    explicit SQL persistence + migrator
 internal/adapters/decision/  optional decision provider (disabled | http)
 internal/api/                REST handlers, SSE, generated OpenAPI
 internal/events/             in-process event bus and execution stream hub
@@ -164,10 +175,23 @@ make openapi       # regenerate docs/openapi.json
 make help          # list targets
 ```
 
-The test suite includes the first end-to-end acceptance scenario of the
-specification (§56) driven by the fake harness and a real temporary Git
-repository: architecture → implementation → testing (fails) → implementation
-(rework) → testing → review → approval → merge → done.
+The test suite includes the end-to-end acceptance scenarios driven by the fake
+harness and real temporary Git repositories: planning a feature with the
+architect and approving the draft plan; minimal, standard and production task
+workflows; reviewer `changes_requested` rework; the human approval gate blocking
+auto-integration; the integration-pending state; dependency gating; concurrent
+scheduler ticks never double-dispatching; crash recovery; and Git safety (a
+dirty developer checkout is never switched, reset or cleaned).
+
+Planning and execution are separate: `POST /api/projects/{id}/decompose` creates
+a decomposition task whose architect output becomes a **draft** plan (the prompt
+asks for the plan JSON as the only result and also for a copy at
+`decomposition/plan.json`, which Orxest falls back to when a harness cannot
+return structured output). Approving
+it (`POST /api/tasks/{id}/approve`) creates the issues/tasks/dependencies;
+rejecting it (`POST /api/tasks/{id}/reject`) asks the architect again. A project
+can opt into `settings.auto_accept_plans` to persist validated plans without
+review. The architect is never a mandatory step of the per-task workflow.
 
 ## Licence
 

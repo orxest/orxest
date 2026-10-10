@@ -22,6 +22,12 @@ type taskDetail struct {
 	Dependencies []repository.TaskDependencyStatus `json:"dependencies"`
 	Dependents   []domain.Task                     `json:"dependents"`
 	Events       []domain.Event                    `json:"events"`
+	// PlanDraft is present when a decomposition task is waiting for a human to
+	// approve the architect's proposed plan.
+	PlanDraft *domain.ArchitectPlan `json:"plan_draft,omitempty"`
+	// AgentSelection explains which project agents can serve the current step's
+	// role, so the UI can distinguish "no agent configured" from "all busy".
+	AgentSelection *app.RoleStaffing `json:"agent_selection,omitempty"`
 }
 
 func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +68,9 @@ func (s *Server) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 			if role, err := s.svc.Workflows.ResolveRole(ctx, step.RoleID); err == nil {
 				detail.Role = role
 			}
+			if staffing, err := s.svc.Agents.RoleStaffing(ctx, task.ProjectID, step.RoleID); err == nil {
+				detail.AgentSelection = staffing
+			}
 			if agents, err := s.svc.Agents.ListProjectAgents(ctx, task.ProjectID); err == nil {
 				for _, pa := range agents {
 					if pa.RoleID == step.RoleID {
@@ -71,6 +80,13 @@ func (s *Server) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+		}
+	}
+	// A decomposition task waiting for approval exposes its draft plan so the UI
+	// can render the issue/tasks/dependency graph before anything is scheduled.
+	if task.Kind == domain.TaskKindDecomposition && task.Status == domain.TaskReview {
+		if plan, err := s.svc.Planner.DraftPlan(ctx, task); err == nil {
+			detail.PlanDraft = plan
 		}
 	}
 	if task.CurrentExecutionID != "" {
@@ -154,8 +170,37 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, task)
 }
 
+// handleApproveTask approves an approval gate step, or a draft architect plan.
+// A body of {"plan": {...}} approves a human-edited plan instead of the draft.
 func (s *Server) handleApproveTask(w http.ResponseWriter, r *http.Request) {
-	task, err := s.svc.Engine.Approve(r.Context(), pathValue(r, "id"))
+	var in struct {
+		Plan *domain.ArchitectPlan `json:"plan"`
+	}
+	if err := decodeOptional(r, &in); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	task, err := s.svc.Engine.ApprovePlan(r.Context(), pathValue(r, "id"), in.Plan)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, task)
+}
+
+// handleResolveConflict hands an integration conflict back to a coding agent:
+// the task is queued at the workflow step that resolves merge conflicts.
+func (s *Server) handleResolveConflict(w http.ResponseWriter, r *http.Request) {
+	task, err := s.svc.Engine.ResolveConflict(r.Context(), pathValue(r, "id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, task)
+}
+
+func (s *Server) handleIntegrateTask(w http.ResponseWriter, r *http.Request) {
+	task, err := s.svc.Engine.IntegrateTask(r.Context(), pathValue(r, "id"))
 	if err != nil {
 		s.fail(w, r, err)
 		return

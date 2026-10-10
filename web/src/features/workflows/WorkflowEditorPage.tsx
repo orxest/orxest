@@ -29,9 +29,10 @@ import {
   type WorkflowDraft,
 } from '@/features/workflows/workflowModel'
 import { useWorkflowActions } from '@/hooks/mutations'
-import { useProject, useProjectWorkflow, useRoles } from '@/hooks/queries'
+import { useProject, useProjectStaffing, useProjectWorkflow, useRoles } from '@/hooks/queries'
 import { relativeTime } from '@/lib/format'
 import { RESERVED_TRANSITIONS } from '@/lib/status'
+import type { RoleStaffing } from '@/types'
 
 const TRANSITION_FIELDS = ['on_success', 'on_failure', 'on_rework'] as const
 
@@ -52,7 +53,14 @@ export function WorkflowEditorPage() {
   const workflowQuery = useProjectWorkflow(projectId)
   const rolesQuery = useRoles()
   const projectQuery = useProject(projectId)
+  const staffingQuery = useProjectStaffing(projectId)
   const save = useWorkflowActions(projectId)
+
+  const staffingByRole = React.useMemo(() => {
+    const map = new Map<string, RoleStaffing>()
+    for (const item of staffingQuery.data ?? []) map.set(item.role_id, item)
+    return map
+  }, [staffingQuery.data])
 
   const workflow = workflowQuery.data ?? null
   const [draft, setDraft] = React.useState<WorkflowDraft | null>(null)
@@ -109,6 +117,14 @@ export function WorkflowEditorPage() {
     [validation.problems, transitionProblems],
   )
   const canSave = Boolean(payload) && validation.valid && transitionProblems.length === 0 && dirty
+
+  /** Steps whose role cannot be staffed right now, once staffing has loaded. */
+  const unstaffableSteps = React.useMemo(() => {
+    if (!draft || !staffingQuery.data) return []
+    return draft.steps
+      .map((step, index) => ({ step, index, staffing: staffingByRole.get(step.role) }))
+      .filter((entry) => Boolean(entry.staffing?.reason))
+  }, [draft, staffingByRole, staffingQuery.data])
 
   const markDirty = () => setDirty(true)
 
@@ -345,6 +361,7 @@ export function WorkflowEditorPage() {
                 roles={roles}
                 stepNames={otherStepNames(draft.steps, index)}
                 problems={stepProblems(problems, index)}
+                staffing={staffingByRole.get(step.role)}
                 canRemove={draft.steps.length > 1}
                 resolveLabel={resolveAt(index)}
                 onPatch={(patch) => patchStep(index, patch)}
@@ -448,6 +465,23 @@ export function WorkflowEditorPage() {
                   ? 'No problems found. Save to persist the definition.'
                   : `${problems.length} problem${problems.length === 1 ? '' : 's'} to fix before saving.`}
               </span>
+              {staffingQuery.error ? (
+                <span className="text-destructive">
+                  Could not load the project's staffing information, so roles cannot be checked.
+                </span>
+              ) : unstaffableSteps.length > 0 ? (
+                <span className="flex items-start gap-1 text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="mt-px size-3 shrink-0" />
+                  <span>
+                    {unstaffableSteps.length} step
+                    {unstaffableSteps.length === 1 ? '' : 's'} cannot be staffed right now:{' '}
+                    {unstaffableSteps
+                      .map(({ step, index }) => `#${index + 1} ${step.name || 'unnamed'}`)
+                      .join(', ')}
+                    .
+                  </span>
+                </span>
+              ) : null}
               {roles.length === 0 ? (
                 <span>
                   The server reported no role catalogue, so type role ids manually as lowercase slugs.

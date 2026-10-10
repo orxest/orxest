@@ -22,7 +22,9 @@ import type {
   Project,
   ProjectAgentView,
   ProjectStats,
+  RepositoryStatus,
   Role,
+  RoleStaffing,
   SchedulerStatus,
   Task,
   TaskDetail,
@@ -104,6 +106,27 @@ export function useProjectAgents(
     queryKey: qk.projectAgents(projectId ?? ''),
     queryFn: () => agentsApi.projectAgents(projectId as string),
     enabled: Boolean(projectId),
+  })
+}
+
+/** Which project agents can staff each role the workflow requires. */
+export function useProjectStaffing(projectId: string | undefined): UseQueryResult<RoleStaffing[]> {
+  return useQuery({
+    queryKey: qk.projectStaffing(projectId ?? ''),
+    queryFn: async () => (await projectsApi.staffing(projectId!)).items,
+    enabled: Boolean(projectId),
+  })
+}
+
+/** Repository health of a project, refreshed when the project changes. */
+export function useProjectRepository(
+  projectId: string | undefined,
+): UseQueryResult<RepositoryStatus> {
+  return useQuery({
+    queryKey: qk.projectRepository(projectId ?? ''),
+    queryFn: () => projectsApi.repository(projectId!),
+    enabled: Boolean(projectId),
+    retry: false,
   })
 }
 

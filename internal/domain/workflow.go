@@ -283,6 +283,15 @@ type WorkflowTemplate struct {
 }
 
 // WorkflowTemplates returns the built-in templates.
+//
+// Templates describe *task execution* only. Planning a feature with the
+// architect is a separate, project/feature-scoped operation (see Planner), so
+// no template makes the architect a mandatory per-task staffing role. A project
+// that genuinely wants a design stage can add an explicit step with the
+// "architect" role to its own workflow.
+//
+// A step's ApprovalGate is a *human* gate: it runs after the step's agent has
+// reported success, and it is distinct from the agent's own review result.
 func WorkflowTemplates() []WorkflowTemplate {
 	return []WorkflowTemplate{
 		{
@@ -296,9 +305,8 @@ func WorkflowTemplates() []WorkflowTemplate {
 		{
 			Name:        "standard",
 			Label:       "Standard",
-			Description: "Architecture, implementation, testing and review with rework loops.",
+			Description: "Implementation, testing and an agent review with rework loops, followed by a human approval gate.",
 			Steps: []WorkflowStep{
-				{Name: "architecture", RoleID: RoleArchitect, OnSuccess: TargetNext, OnFailure: TargetRetry},
 				{Name: "implementation", RoleID: RoleDeveloper, OnSuccess: TargetNext, OnFailure: TargetRetry},
 				{Name: "testing", RoleID: RoleTester, OnSuccess: TargetNext, OnFailure: "implementation"},
 				{Name: "review", RoleID: RoleReviewer, OnSuccess: TargetDone, OnFailure: "implementation", OnRework: "implementation", ApprovalGate: true},
@@ -307,9 +315,8 @@ func WorkflowTemplates() []WorkflowTemplate {
 		{
 			Name:        "production",
 			Label:       "Production",
-			Description: "Architecture, senior implementation, testing, security review and approval.",
+			Description: "Senior implementation, testing and security review, agent review, and a human approval gate.",
 			Steps: []WorkflowStep{
-				{Name: "architecture", RoleID: RoleArchitect, OnSuccess: TargetNext, OnFailure: TargetRetry},
 				{Name: "implementation", RoleID: RoleSeniorDeveloper, OnSuccess: TargetNext, OnFailure: TargetRetry},
 				{Name: "testing", RoleID: RoleTester, OnSuccess: TargetNext, OnFailure: "implementation"},
 				{Name: "security", RoleID: RoleSecurity, OnSuccess: TargetNext, OnFailure: "implementation"},

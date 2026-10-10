@@ -108,6 +108,18 @@ func (s *Server) handleListProjectAgents(w http.ResponseWriter, r *http.Request)
 	s.writeJSON(w, http.StatusOK, listOf(agents))
 }
 
+// handleProjectStaffing reports, for every role the project's workflow requires,
+// which project agents can serve it right now. The workflow editor uses it to
+// flag a missing role before a task ever reaches that step.
+func (s *Server) handleProjectStaffing(w http.ResponseWriter, r *http.Request) {
+	staffing, err := s.svc.Agents.ProjectStaffing(r.Context(), pathValue(r, "id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, listOf(staffing))
+}
+
 func (s *Server) handleAssignAgent(w http.ResponseWriter, r *http.Request) {
 	var in app.AssignmentInput
 	if err := decode(r, &in); err != nil {

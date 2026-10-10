@@ -3,6 +3,8 @@ import {
   Check,
   ChevronDown,
   ExternalLink,
+  GitMerge,
+  Wrench,
   Loader2,
   MoveRight,
   Play,
@@ -56,7 +58,7 @@ export function TaskActionsMenu({
   const [reassignOpen, setReassignOpen] = React.useState(false)
   const [rejectOpen, setRejectOpen] = React.useState(false)
 
-  const allowed = taskActions(task.status)
+  const allowed = taskActions(task.status, task.failure_kind)
   const busy = actions.isBusy(task.id)
 
   return (
@@ -124,6 +126,20 @@ export function TaskActionsMenu({
           <DropdownMenuItem disabled={!allowed.canReject || busy} onSelect={() => setRejectOpen(true)}>
             <X />
             Reject with reason…
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!allowed.canIntegrate || busy}
+            onSelect={() => actions.integrate.mutate(task.id)}
+          >
+            <GitMerge />
+            Integrate branch
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!allowed.canResolveConflict || busy}
+            onSelect={() => actions.resolveConflict.mutate(task.id)}
+          >
+            <Wrench />
+            Resolve conflict with agent
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled={!allowed.canReassign || busy} onSelect={() => setReassignOpen(true)}>

@@ -252,8 +252,10 @@
           </div>
           <div class="callout">
             You do not “assign a project to an agent”. The <strong>project owns the assignments</strong>:
-            the same agent can be a <span class="mono">junior-developer</span> in one project and a
-            <span class="mono">senior-developer</span> in another — with a different model if you like.
+            the same agent configuration can be a <span class="mono">junior-developer</span> in one project
+            and a <span class="mono">senior-developer</span> in another. The <em>model</em> belongs to the agent
+            configuration, so using a different model means creating a second configuration (an assignment
+            cannot override it).
           </div>
         </div>
         <div class="stack">
@@ -263,11 +265,13 @@
               enabled agent for that role at that moment. That is why one task can be handled by
               four different agents:</p>
             <div class="pipeline" style="margin-top:10px">
-              <div class="node">architect</div><span class="arrow">→</span>
-              <div class="node">senior-developer</div><span class="arrow">→</span>
-              <div class="node">tester</div><span class="arrow">→</span>
-              <div class="node">reviewer</div>
+              <div class="node">implementation</div><span class="arrow">→</span>
+              <div class="node">testing</div><span class="arrow">→</span>
+              <div class="node">review</div>
             </div>
+            <p class="small dim" style="margin-top:8px">Planning is not one of these steps: the architect runs
+              once per feature request to produce a reviewable issue/task draft, and the generated tasks then
+              run the workflow above.</p>
           </div>
           <div class="card tight">
             <h4>Shipped harnesses</h4>
@@ -327,7 +331,7 @@
       </div>
       <div class="cols-6040">
         <div>
-          <div class="label-illus">UI layout — the real form uses exactly these fields and hints</div>
+          <div class="label-illus">UI layout — illustrative sketch of the project form</div>
           <div class="ui">
             <div class="ui-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="ui-url">127.0.0.1:8787/projects/new</span></div>
             <div class="ui-body">
@@ -357,7 +361,7 @@
             <h4>What each field decides</h4>
             <ul class="small">
               <li><strong>Repository path</strong> — the only directory tree Orxest and its agents run in. Each task gets a worktree under <span class="mono">&lt;repo&gt;/.orxest/worktrees/</span>.</li>
-              <li><strong>Target branch</strong> — where approved task branches are merged. Orxest switches your checkout to it when integrating.</li>
+              <li><strong>Target branch</strong> — where approved task branches are merged. Orxest prepares the merge in its own managed worktree and never switches, resets or cleans your checkout; if the target branch is checked out with uncommitted changes, integration is refused with a clear reason instead.</li>
               <li><strong>Repository URL</strong> — used when the path does not exist yet and Orxest clones instead of initialising.</li>
             </ul>
           </div>
@@ -393,32 +397,30 @@
         </div>
         <div class="card" style="border-color:#3f3f46">
           <div class="card-head"><span class="badge mono">standard</span><span class="badge info">default</span></div>
-          <p class="small">Architecture, implementation, testing, review.</p>
+          <p class="small">Implementation, testing and agent review, with a human approval gate.</p>
           <table style="margin-top:10px">
             <thead><tr><th>Step</th><th>Role</th></tr></thead>
             <tbody>
-              <tr><td class="mono">architecture</td><td class="mono">architect</td></tr>
               <tr><td class="mono">implementation</td><td class="mono">developer</td></tr>
               <tr><td class="mono">testing</td><td class="mono">tester</td></tr>
               <tr><td class="mono">review <span class="badge purple">gate</span></td><td class="mono">reviewer</td></tr>
             </tbody>
           </table>
-          <p class="small dim" style="margin-top:8px">Staff <strong>4</strong> roles.</p>
+          <p class="small dim" style="margin-top:8px">Staff <strong>3</strong> roles.</p>
         </div>
         <div class="card">
           <div class="card-head"><span class="badge mono">production</span></div>
-          <p class="small">Adds a security review before approval.</p>
+          <p class="small">Senior implementation plus a security review before approval.</p>
           <table style="margin-top:10px">
             <thead><tr><th>Step</th><th>Role</th></tr></thead>
             <tbody>
-              <tr><td class="mono">architecture</td><td class="mono">architect</td></tr>
               <tr><td class="mono">implementation</td><td class="mono">senior-developer</td></tr>
               <tr><td class="mono">testing</td><td class="mono">tester</td></tr>
               <tr><td class="mono">security</td><td class="mono">security</td></tr>
               <tr><td class="mono">review <span class="badge purple">gate</span></td><td class="mono">reviewer</td></tr>
             </tbody>
           </table>
-          <p class="small dim" style="margin-top:8px">Staff <strong>5</strong> roles.</p>
+          <p class="small dim" style="margin-top:8px">Staff <strong>4</strong> roles.</p>
         </div>
       </div>
       <div class="cols" style="margin-top:18px">
@@ -430,8 +432,10 @@
         <div class="card tight">
           <h4>Branching is part of the template</h4>
           <p class="small">In <span class="mono">standard</span>, failing tests send the task <em>back</em> to
-            <span class="mono">implementation</span> instead of failing it; the review step is an approval gate,
-            so a human (or the API) approves or rejects before integration.</p>
+            <span class="mono">implementation</span> instead of failing it. Two different decisions are involved
+            at the end: the <strong>reviewer agent</strong> reports <span class="mono">approved</span> or
+            <span class="mono">changes_requested</span> (which routes the task back to implementation), and the
+            optional <strong>human approval gate</strong> then waits for a person before integration.</p>
         </div>
       </div>
     </section>
@@ -451,7 +455,7 @@
               <div class="ui-h1">Agents</div>
               <div class="ui-sub">Reusable worker configurations. Assign them to roles per project.</div>
               <div class="ui-card">
-                <div class="h">codex-senior <span class="badge success">enabled</span></div>
+                <div class="h">pi-senior <span class="badge success">enabled</span></div>
                 <div class="d"><span class="badge mono">pi</span> <span class="badge mono">gemini-2.5-pro</span> <span class="badge mono">reasoning high</span> <span class="badge mono">concurrency 1</span></div>
                 <table>
                   <thead><tr><th>Field</th><th>Value</th></tr></thead>
@@ -466,7 +470,7 @@
                 </table>
               </div>
               <div class="ui-card" style="opacity:.75">
-                <div class="h">codex-tester <span class="badge success">enabled</span></div>
+                <div class="h">pi-tester <span class="badge success">enabled</span></div>
                 <div class="d"><span class="badge mono">pi</span> <span class="badge mono">gemini-2.5-flash</span> <span class="badge mono">reasoning medium</span></div>
               </div>
               <div class="row" style="justify-content:flex-end"><span class="btn primary">New agent</span></div>
@@ -516,7 +520,7 @@
             </div>
             <div class="ui-body">
               <div class="ui-h1">Project agents</div>
-              <div class="ui-sub">Assignments decide which agent serves each workflow step role in this project. A role may have several agents; the highest priority enabled one is preferred.</div>
+              <div class="ui-sub">Assignments decide which agent serves each workflow step role in this project. Several agents may serve one role: they are <em>alternatives</em>, ordered by priority and selected only when available. That is failover, not complexity-based routing — use the distinct <span class="mono">junior-developer</span> and <span class="mono">senior-developer</span> roles when you want that split.</div>
               <table>
                 <thead><tr><th>Role</th><th>Used by step</th><th>Agents (priority)</th><th></th></tr></thead>
                 <tbody>
@@ -551,13 +555,14 @@
           <div class="dialog">
             <div class="h">Assign agent</div>
             <div class="d">An assignment makes an agent eligible for one workflow step role in this project.
-              When several agents serve a role the highest priority wins.</div>
+              When several agents serve a role they are alternatives: the highest priority available one is chosen, and a lower priority one is used only when the preferred agent is disabled or at capacity. Priority never means "this agent is better at hard tasks".</div>
             <div class="field"><label>Agent</label>
               <div class="select"><span>pi-reviewer · <span class="dim">pi · gemini-2.5-pro</span></span><span class="caret">▾</span></div>
             </div>
             <div class="field"><label>Role</label>
               <div class="select"><span>Reviewer <span class="dim mono">reviewer</span></span><span class="caret">▾</span></div>
-              <div class="hint">Any other role slug can be typed in, e.g. <span class="mono">security</span>.</div>
+              <div class="hint">Roles come from the Roles API. Create a new slug first
+                (<span class="mono">POST /api/roles</span>), then select it here — typing an unknown value is rejected.</div>
             </div>
             <div class="grid2">
               <div class="field"><label>Priority</label><div class="input">10</div></div>
@@ -625,7 +630,8 @@ task dispatched   task_id=tsk_…  step=implementation
               <li><strong>Reassign</strong> — point the next execution at a specific agent.</li>
               <li><strong>Move</strong> — send the task to another workflow step.</li>
               <li><strong>Retry</strong> — new execution, previous ones preserved.</li>
-              <li><strong>Approve / Reject</strong> — at an approval gate, so review is a real gate.</li>
+              <li><strong>Approve / Reject</strong> — at a human approval gate, or to accept/reject a draft architect plan.</li>
+              <li><strong>Integrate</strong> — merge a task parked in the <span class="mono">integration</span> state.</li>
             </ul>
           </div>
         </div>
@@ -659,7 +665,11 @@ task dispatched   task_id=tsk_…  step=implementation
                 </div>
                 <div class="ui-card" style="margin:0">
                   <div class="h">Review <span class="dim">1</span></div>
-                  <div class="d">Implement JWT auth<br /><span class="badge purple">awaiting approval</span></div>
+                  <div class="d">Implement JWT auth<br /><span class="badge purple">awaiting human approval</span></div>
+                </div>
+                <div class="ui-card" style="margin:0">
+                  <div class="h">Awaiting integration <span class="dim">1</span></div>
+                  <div class="d">Rotate signing keys<br /><span class="badge mono">auto_integrate off</span></div>
                 </div>
               </div>
               <div class="ui-card" style="margin-top:12px">
@@ -675,7 +685,8 @@ task dispatched   task_id=tsk_…  step=implementation
           <div class="card">
             <h4>What you get for free per task</h4>
             <ul class="small">
-              <li>an isolated worktree and branch <span class="mono">orxest/task/&lt;id&gt;</span></li>
+              <li>one worktree and branch <span class="mono">orxest/task/&lt;id&gt;</span> per task, shared by its sequential steps and rework</li>
+              <li>an explicit <span class="mono">integration</span> state when <span class="mono">auto_integrate</span> is off, so dependents never start from a branch without their prerequisites</li>
               <li>live streamed output and a raw JSONL harness log</li>
               <li>append-only execution history with the agent, model and outcome of every attempt</li>
               <li>token and cost metrics reported by the harness</li>
@@ -774,8 +785,9 @@ task dispatched   task_id=tsk_…  step=implementation
           <p class="small mono" style="line-height:1.9">
             architect<br />senior-developer<br />junior-developer<br />developer<br />tester<br />reviewer<br />security
           </p>
-          <p class="small dim">Roles are reusable and independent from models. Add your own with any slug
-            (<span class="mono">POST /api/roles</span>) and use it in a workflow step and an assignment.</p>
+          <p class="small dim">Roles are reusable and independent from models. Create your own slug with
+            <span class="mono">POST /api/roles</span> (or the workflow editor), then select it in a workflow step
+            and assign an agent to it. A step can only require a role that exists.</p>
         </div>
         <div class="card">
           <h4>Agent fields</h4>
@@ -787,7 +799,7 @@ task dispatched   task_id=tsk_…  step=implementation
               <tr><td class="mono">model</td><td class="small">model id or pattern</td></tr>
               <tr><td class="mono">reasoning</td><td class="small">none…high</td></tr>
               <tr><td class="mono">instructions</td><td class="small">prepended to every prompt</td></tr>
-              <tr><td class="mono">harness_options</td><td class="small">per-harness settings</td></tr>
+              <tr><td class="mono">harness_options</td><td class="small">per-harness settings (spelled <span class="mono">options</span> in a project YAML file)</td></tr>
               <tr><td class="mono">max_concurrent_executions</td><td class="small">default 1</td></tr>
               <tr><td class="mono">timeout_seconds</td><td class="small">per execution</td></tr>
               <tr><td class="mono">enabled</td><td class="small">disabled agents are never selected</td></tr>

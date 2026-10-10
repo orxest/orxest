@@ -31,9 +31,9 @@ is implemented, and any deliberate deviation. Status values:
 | 20 | Focused execution request | done | `ports.ExecutionRequest`, `internal/app/prompt.go` |
 | 21 | Append-only execution history | done | `executions` table; `ExecutionService.finalize` never overwrites |
 | 22 | Execution states separate from task states | done | `domain/execution.go`, `domain/task.go` state machines |
-| 23 | Git integration: isolated worktree + branch per task | done | `internal/adapters/git`, `orxest/task/<id>` |
+| 23 | Git integration: one worktree + branch per task, reused across executions | done | `internal/adapters/git`, `orxest/task/<id>` |
 | 24 | Worktree lifecycle incl. safe cleanup | done | `CreateWorktree`/`RemoveWorktree`, cleanup policy in `Engine.cleanupWorktree` |
-| 25 | Task integration as a clean merge with explicit conflict | done | `Engine.integrate`, `integration_conflict` failure kind |
+| 25 | Task integration as a clean merge with explicit conflict | done | `Engine.integrate` (merge prepared in an Orxest-managed worktree), `integration`, `integration_conflict` |
 | 26 | Scheduler rules (7 checks) | done | `Scheduler.Tick` / `evaluateTask` |
 | 27 | Configurable concurrency (global/project/agent) | done | `orchestration` config, project settings, agent settings |
 | 28 | Board as a projection, validated transitions | done | `GET /api/projects/{id}/board`, `TaskService.Move` |
@@ -60,11 +60,11 @@ is implemented, and any deliberate deviation. Status values:
 | 49 | Security boundaries | done | explicit process arguments, no shell, validated plan output, path guards, no secrets in prompts/logs |
 | 50 | MVP scope | done | see the capability table in `README.md` |
 | 51 | Explicitly out of scope for MVP | done | none of the listed items exist |
-| 52 | Phase 2 | partly done | multiple harness adapters: Codex **and Pi** are implemented; GitHub integration, PR creation and cost analytics remain future work (token/cost per execution is already recorded) |
+| 52 | Phase 2 | phase 2 | multiple harness adapters: Codex **and Pi** are implemented; GitHub integration, PR creation and cost analytics remain future work (token/cost per execution is already recorded) |
 | 53 | Phase 3 | phase 3 | not implemented by design |
 | 54 | Future decision layer (recommendation only) | done | provider returns recommendations; Orxest decides and records `applied` |
 | 55 | Orxest operating principle | done | agents receive one task's context and report an outcome; workflow logic never leaks into prompts |
-| 56 | First end-to-end acceptance scenario | done | `internal/app/acceptance_test.go` (fake harness + real Git), verified end to end against the binary |
+| 56 | First end-to-end acceptance scenario | done (differs) | `internal/app/acceptance_test.go` and `internal/app/lifecycle_test.go` (fake harness + real Git): implementation → testing (fail) → rework → testing → agent review → human approval → integration → done; planning is a separate scenario |
 | 57 | Implementation priorities | done | followed in order |
 | 58 | Engineering requirements | done | see `docs/architecture.md` |
 | 59 | Definition of done (22 items) | done | see below |
@@ -76,13 +76,13 @@ is implemented, and any deliberate deviation. Status values:
 | 1 | Create a project through the GUI | `web/src/features/projects/NewProjectPage.tsx` |
 | 2 | Project-specific configurable workflow | `WorkflowEditorPage.tsx`, `PUT /api/projects/{id}/workflow` |
 | 3 | Project agents assigned to roles | `ProjectAgentsPage.tsx`, `project_agents` |
-| 4 | Different roles use different models | one agent configuration per role; model is per agent |
-| 5 | Junior/senior variants with different capability | `junior-developer`/`senior-developer` roles + separate agents |
+| 4 | Different roles use different models | one agent configuration per role; the model lives on the agent configuration, so different models require distinct agent configurations |
+| 5 | Junior/senior variants with different capability | `junior-developer`/`senior-developer` roles + separate agents; several agents in one role are alternatives chosen by priority then availability, never by task complexity |
 | 6 | A task passes through multiple role-based stages | `Engine` + `TestAcceptanceScenario` |
 | 7 | Tasks support dependencies | `task_dependencies`, board graph, `TestDependencyGatingRejectsCycles` |
 | 8 | Scheduler executes ready tasks | `Scheduler.Tick` |
 | 9 | Concurrent task execution | global/project/agent limits; `CountActiveBy*` |
-| 10 | Isolated Git worktree per execution | `internal/adapters/git` |
+| 10 | Isolated Git worktree per task | `internal/adapters/git`, `Project.TaskWorktreePath`; all executions of a task share it so rework keeps its code |
 | 11 | Codex executes through the harness abstraction | `internal/adapters/codex`, stub-CLI test |
 | 12 | Real-time execution visibility | SSE project + execution streams, log viewer |
 | 13 | Persistent execution history | append-only `executions` |
@@ -91,7 +91,7 @@ is implemented, and any deliberate deviation. Status values:
 | 16 | Review approves or rejects | approval gates, `Engine.Approve/Reject` |
 | 17 | Approved changes integrate into the project branch | `Engine.integrate` + merge commits in `TestAcceptanceScenario` |
 | 18 | Minimal (developer-only) workflow | `minimal` template |
-| 19 | architect → developer → tester → reviewer workflow | `standard` template |
+| 19 | Standard role-based task workflow (implementation → testing → agent review) | `standard` template; planning with the architect is a separate operation |
 | 20 | Single Go application with SQLite and a web frontend | `make build` produces one binary embedding `web/dist` |
 | 21 | Orchestration core independent of Codex | `internal/ports` + adapters; core imports neither |
 | 22 | Optional decision-model support without core changes | `ports.DecisionProvider`, disabled default |

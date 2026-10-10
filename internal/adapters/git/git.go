@@ -42,6 +42,8 @@ type CommandError struct {
 	Dir    string
 	Stderr string
 	Err    error
+	// ExitCode is the process exit status, or -1 when it is unknown.
+	ExitCode int
 }
 
 func (e *CommandError) Error() string {
@@ -80,7 +82,12 @@ func (a *Adapter) runInput(ctx context.Context, dir string, stdin []byte, args .
 		if ctx.Err() != nil {
 			return "", ports.EnvErrorf("git "+strings.Join(args, " "), ctx.Err())
 		}
-		return stdout.String(), &CommandError{Args: args, Dir: dir, Stderr: stderr.String(), Err: err}
+		exitCode := -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+		return stdout.String(), &CommandError{Args: args, Dir: dir, Stderr: stderr.String(), Err: err, ExitCode: exitCode}
 	}
 	return stdout.String(), nil
 }
@@ -199,8 +206,13 @@ func (a *Adapter) BranchExists(ctx context.Context, repoPath, branch string) (bo
 	if err != nil {
 		var cmdErr *CommandError
 		if errors.As(err, &cmdErr) {
-			// Exit code 1 simply means "no such ref".
-			return false, nil
+			// Exit code 1 simply means "no such ref"; anything else (a broken
+			// repository, a lock, a missing directory) must not be mistaken for
+			// "the branch does not exist".
+			if cmdErr.ExitCode == 1 {
+				return false, nil
+			}
+			return false, ports.EnvErrorf("branch exists", err)
 		}
 		return false, ports.EnvErrorf("branch exists", err)
 	}
@@ -231,7 +243,7 @@ func (a *Adapter) DefaultBranch(ctx context.Context, repoPath string) (string, e
 
 // CreateWorktree implements ports.Git.
 func (a *Adapter) CreateWorktree(ctx context.Context, req ports.WorktreeRequest) (ports.Worktree, error) {
-	if err := validateWorkspacePath(req.RepositoryPath, req.Path); err != nil {
+	if err := validateWorkspacePath(req.RepositoryPath, req.WorkspaceRoot, req.Path); err != nil {
 		return ports.Worktree{}, err
 	}
 	if strings.TrimSpace(req.Branch) == "" {
@@ -443,7 +455,7 @@ func (a *Adapter) CommitAll(ctx context.Context, path, message, authorName, auth
 
 // RemoveWorktree implements ports.Git.
 func (a *Adapter) RemoveWorktree(ctx context.Context, req ports.RemoveWorktreeRequest) error {
-	if err := validateWorkspacePath(req.RepositoryPath, req.Path); err != nil {
+	if err := validateWorkspacePath(req.RepositoryPath, req.WorkspaceRoot, req.Path); err != nil {
 		return err
 	}
 	if _, err := os.Stat(req.Path); err != nil {
@@ -471,6 +483,19 @@ func (a *Adapter) RemoveWorktree(ctx context.Context, req ports.RemoveWorktreeRe
 }
 
 // Integrate implements ports.Git.
+//
+// The merge is prepared in an Orxest-managed worktree that is detached at the
+// target branch, so Orxest never checks out, resets, cleans or merges inside
+// the developer's own working tree. Only after a successful merge is the target
+// branch reference advanced:
+//
+//   - target branch checked out somewhere else than the project repository:
+//     refused, because Orxest will not rewrite another working tree;
+//   - target branch checked out in the project repository and dirty: refused
+//     with an actionable reason, so uncommitted work is never disturbed;
+//   - target branch checked out in the project repository and clean: the
+//     repository is fast-forwarded, which keeps the checkout consistent;
+//   - target branch not checked out anywhere: the branch ref is updated.
 func (a *Adapter) Integrate(ctx context.Context, req ports.IntegrateRequest) (ports.IntegrateResult, error) {
 	res := ports.IntegrateResult{}
 	if req.Branch == req.TargetBranch {
@@ -479,9 +504,53 @@ func (a *Adapter) Integrate(ctx context.Context, req ports.IntegrateRequest) (po
 		return res, nil
 	}
 	repo := req.RepositoryPath
-	// Orxest generates the merge commit on behalf of the project, so it always
-	// supplies an identity: relying on the developer's global Git configuration
-	// would make integration fail on a fresh machine or CI runner.
+	if strings.TrimSpace(repo) == "" || strings.TrimSpace(req.Branch) == "" || strings.TrimSpace(req.TargetBranch) == "" {
+		return res, ports.EnvErrorf("integrate", errors.New("repository, branch and target branch are required"))
+	}
+	if err := a.ensureBranch(ctx, repo, req.TargetBranch); err != nil {
+		return res, err
+	}
+	if err := a.ensureBranch(ctx, repo, req.Branch); err != nil {
+		return res, err
+	}
+
+	// Decide, before touching anything, whether advancing the target branch is
+	// safe for every checkout that currently holds it.
+	checkedOutAt, checkedOut, err := a.worktreeWithBranch(ctx, repo, req.TargetBranch)
+	if err != nil {
+		return res, err
+	}
+	primaryHasTarget := checkedOut && samePath(checkedOutAt, repo)
+	if checkedOut && !primaryHasTarget {
+		return res, ports.EnvErrorf("integrate",
+			fmt.Errorf("target branch %q is checked out in %s; Orxest refuses to modify another working tree", req.TargetBranch, checkedOutAt))
+	}
+	if primaryHasTarget {
+		status, err := a.WorktreeStatus(ctx, repo)
+		if err != nil {
+			return res, err
+		}
+		// Only tracked modifications are a real hazard: a fast-forward may
+		// overwrite them, or leave the developer unable to tell their own edits
+		// from the merged ones. Untracked files are left alone by the merge (git
+		// refuses the fast-forward if one of them would be overwritten), so they
+		// must not block the whole workflow — planning artifacts, scratch files
+		// and build output sit in a checkout all the time.
+		if len(status.ChangedFiles) > 0 {
+			res.Blocked = true
+			res.BlockedReason = fmt.Sprintf(
+				"target branch %q is checked out in %s with uncommitted tracked changes (%s); commit or stash them, or switch that checkout, then retry integration",
+				req.TargetBranch, repo, strings.Join(limitList(status.ChangedFiles, 5), ", "))
+			res.Message = res.BlockedReason
+			return res, nil
+		}
+		if len(status.UntrackedFiles) > 0 {
+			res.Warnings = append(res.Warnings, fmt.Sprintf(
+				"%d untracked file(s) are present in %s; the fast-forward leaves them untouched",
+				len(status.UntrackedFiles), repo))
+		}
+	}
+
 	authorName := req.AuthorName
 	if authorName == "" {
 		authorName = "Orxest"
@@ -490,16 +559,41 @@ func (a *Adapter) Integrate(ctx context.Context, req ports.IntegrateRequest) (po
 	if authorEmail == "" {
 		authorEmail = "orxest@localhost"
 	}
-	gitArgs := []string{"-c", "user.name=" + authorName, "-c", "user.email=" + authorEmail}
-	if _, err := a.run(ctx, repo, append(append([]string{}, gitArgs...), "checkout", req.TargetBranch)...); err != nil {
-		return res, ports.EnvErrorf("checkout target branch", err)
+	identity := []string{"-c", "user.name=" + authorName, "-c", "user.email=" + authorEmail}
+
+	integrationDir := req.IntegrationDir
+	if strings.TrimSpace(integrationDir) == "" {
+		integrationDir = filepath.Join(repo, ".orxest", "integration")
 	}
-	mergeArgs := append(append([]string{}, gitArgs...), "merge", "--no-ff", "--no-edit", "-m", req.Message, req.Branch)
-	out, err := a.run(ctx, repo, mergeArgs...)
+	if err := os.MkdirAll(integrationDir, 0o755); err != nil {
+		return res, ports.EnvErrorf("integrate", err)
+	}
+	tmp, err := os.MkdirTemp(integrationDir, "merge-")
 	if err != nil {
-		conflicted, _ := a.run(ctx, repo, "diff", "--name-only", "--diff-filter=U")
+		return res, ports.EnvErrorf("integrate", err)
+	}
+	// MkdirTemp creates the directory, which git worktree add rejects; remove it
+	// first and let git create it.
+	if err := os.Remove(tmp); err != nil {
+		return res, ports.EnvErrorf("integrate", err)
+	}
+	cleanup := func() {
+		_, _ = a.run(ctx, repo, "worktree", "remove", "--force", tmp)
+		_, _ = a.run(ctx, repo, "worktree", "prune")
+		_ = os.RemoveAll(tmp)
+	}
+	if _, err := a.run(ctx, repo, "worktree", "add", "--detach", tmp, req.TargetBranch); err != nil {
+		cleanup()
+		return res, ports.EnvErrorf("prepare integration worktree", err)
+	}
+	defer cleanup()
+
+	mergeArgs := append(append([]string{}, identity...), "merge", "--no-ff", "--no-edit", "-m", req.Message, req.Branch)
+	out, err := a.run(ctx, tmp, mergeArgs...)
+	if err != nil {
+		conflicted, _ := a.run(ctx, tmp, "diff", "--name-only", "--diff-filter=U")
 		files := nonEmptyLines(conflicted)
-		_, _ = a.run(ctx, repo, "merge", "--abort")
+		_, _ = a.run(ctx, tmp, "merge", "--abort")
 		if len(files) > 0 {
 			res.Conflict = true
 			res.ConflictedFiles = files
@@ -514,11 +608,34 @@ func (a *Adapter) Integrate(ctx context.Context, req ports.IntegrateRequest) (po
 		res.Message = "already up to date"
 		return res, nil
 	}
-	sha, _ := a.revParse(ctx, repo, "HEAD")
+	sha, err := a.revParse(ctx, tmp, "HEAD")
+	if err != nil {
+		return res, err
+	}
+	// Advance the target branch reference outside the developer's checkout when
+	// possible; otherwise keep the checkout the developer is already on
+	// consistent by fast-forwarding it (which preserves local changes).
+	if primaryHasTarget {
+		if _, err := a.run(ctx, repo, append(append([]string{}, identity...), "merge", "--ff-only", sha)...); err != nil {
+			return res, ports.EnvErrorf("fast-forward target branch", err)
+		}
+	} else {
+		if _, err := a.run(ctx, repo, "update-ref", "refs/heads/"+req.TargetBranch, sha); err != nil {
+			return res, ports.EnvErrorf("advance target branch", err)
+		}
+	}
 	res.Integrated = true
 	res.MergeCommitSHA = sha
 	res.Message = "merged " + req.Branch + " into " + req.TargetBranch
 	return res, nil
+}
+
+// limitList renders a short, human readable list for an error message.
+func limitList(items []string, max int) []string {
+	if len(items) <= max {
+		return items
+	}
+	return append(append([]string{}, items[:max]...), fmt.Sprintf("and %d more", len(items)-max))
 }
 
 func parseCommitLine(line string) ports.Commit {
@@ -550,8 +667,11 @@ func nonEmptyLines(s string) []string {
 }
 
 // validateWorkspacePath enforces that Orxest only ever touches directories it
-// was explicitly configured to use (spec §49).
-func validateWorkspacePath(repoPath, worktreePath string) error {
+// was explicitly configured to use (spec §49). When workspaceRoot is set, the
+// canonical worktree path must live inside it, which prevents a bad project
+// configuration from pointing a worktree (or a cleanup) at an arbitrary host
+// directory.
+func validateWorkspacePath(repoPath, workspaceRoot, worktreePath string) error {
 	if strings.TrimSpace(repoPath) == "" {
 		return ports.EnvErrorf("validate workspace", errors.New("repository path is empty"))
 	}
@@ -565,9 +685,93 @@ func validateWorkspacePath(repoPath, worktreePath string) error {
 	if clean == "/" || clean == filepath.Clean(repoPath) {
 		return ports.EnvErrorf("validate workspace", fmt.Errorf("refusing to use %s as a worktree", clean))
 	}
-	parent := filepath.Dir(clean)
-	if parent == "/" {
+	if parent := filepath.Dir(clean); parent == "/" {
 		return ports.EnvErrorf("validate workspace", fmt.Errorf("refusing to use %s as a worktree", clean))
 	}
+	if strings.TrimSpace(workspaceRoot) != "" {
+		if !filepath.IsAbs(workspaceRoot) {
+			return ports.EnvErrorf("validate workspace", errors.New("workspace root must be absolute"))
+		}
+		root := canonicalPath(workspaceRoot)
+		target := canonicalPath(clean)
+		if root != target && !strings.HasPrefix(target, root+string(filepath.Separator)) {
+			return ports.EnvErrorf("validate workspace",
+				fmt.Errorf("%s is outside the configured Orxest workspace %s", target, root))
+		}
+	}
 	return nil
+}
+
+// ensureBranch reports whether a branch exists, failing with an explicit
+// message when it does not. A missing target branch must never be created
+// implicitly, because that would silently redirect integration.
+func (a *Adapter) ensureBranch(ctx context.Context, repoPath, branch string) error {
+	ok, err := a.BranchExists(ctx, repoPath, branch)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ports.EnvErrorf("integrate",
+			fmt.Errorf("target branch %q does not exist in %s", branch, repoPath))
+	}
+	return nil
+}
+
+// worktreeWithBranch reports the path of the worktree that currently has the
+// given branch checked out, if any.
+func (a *Adapter) worktreeWithBranch(ctx context.Context, repoPath, branch string) (string, bool, error) {
+	out, err := a.run(ctx, repoPath, "worktree", "list", "--porcelain")
+	if err != nil {
+		return "", false, ports.EnvErrorf("list worktrees", err)
+	}
+	want := "refs/heads/" + branch
+	var current string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "":
+			current = ""
+		case strings.HasPrefix(line, "worktree "):
+			current = strings.TrimPrefix(line, "worktree ")
+		case strings.HasPrefix(line, "branch "):
+			if strings.TrimPrefix(line, "branch ") == want && current != "" {
+				return current, true, nil
+			}
+		}
+	}
+	return "", false, nil
+}
+
+// samePath compares two paths after canonicalizing them. Git reports real
+// paths (for example /private/var on macOS) while configuration usually uses
+// the symlinked form (/var), so a plain string comparison is not enough.
+func samePath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return canonicalPath(a) == canonicalPath(b)
+}
+
+// canonicalPath resolves symlinks in the longest existing ancestor of p and
+// re-appends the not-yet-existing remainder. Configuration usually names the
+// symlinked form of a path (/var) while Git reports the real one (/private/var),
+// so every containment and equality check has to compare canonical paths.
+func canonicalPath(p string) string {
+	clean := filepath.Clean(p)
+	var trailing []string
+	current := clean
+	for {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			for i := len(trailing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, trailing[i])
+			}
+			return resolved
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return clean
+		}
+		trailing = append(trailing, filepath.Base(current))
+		current = parent
+	}
 }

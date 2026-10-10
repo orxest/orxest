@@ -21,6 +21,9 @@ const (
 	EventTaskRework     = "task.rework"
 	EventTaskCancelled  = "task.cancelled"
 	EventTaskReview     = "task.review"
+	// EventTaskIntegrationPending marks a task whose workflow finished but whose
+	// branch has not been integrated into the target branch yet.
+	EventTaskIntegrationPending = "task.integration_pending"
 
 	EventExecutionStarted   = "execution.started"
 	EventExecutionOutput    = "execution.output"

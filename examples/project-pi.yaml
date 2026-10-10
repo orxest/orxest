@@ -69,15 +69,12 @@ assignments:
     role: reviewer
     priority: 10
 
+# Planning with the architect is separate from per-task execution. The
+# `pi-architect` agent above serves the "Plan work with architect" action.
 workflow:
-  name: standard
+  name: reviewed
+  description: Implementation, testing and agent review with a human approval gate.
   steps:
-    - name: architecture
-      role: architect
-      on_success: next
-      on_failure: retry
-      max_attempts: 2
-
     - name: implementation
       role: senior-developer
       on_success: next

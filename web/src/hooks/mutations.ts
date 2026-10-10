@@ -18,7 +18,7 @@ import {
 import { workflowsApi, type WorkflowPayload } from '@/api/workflows'
 import { tasksApi, type MoveTaskInput, type RetryTaskInput, type UpdateTaskInput } from '@/api/tasks'
 import { useToast } from '@/hooks/useToast'
-import type { Agent, Issue, Project, Task, Workflow } from '@/types'
+import type { Agent, ArchitectPlan, Issue, Project, Task, Workflow } from '@/types'
 
 /** Invalidates every cache entry a task mutation can affect. */
 export function useInvalidateTask() {
@@ -57,6 +57,9 @@ export interface TaskActions {
   retry: UseMutationResult<Task, unknown, RetryTaskInput & { taskId: string }>
   cancel: UseMutationResult<Task, unknown, string>
   approve: UseMutationResult<Task, unknown, string>
+  approvePlan: UseMutationResult<Task, unknown, { taskId: string; plan: ArchitectPlan }>
+  integrate: UseMutationResult<Task, unknown, string>
+  resolveConflict: UseMutationResult<Task, unknown, string>
   reject: UseMutationResult<Task, unknown, { taskId: string; reason: string }>
   reassign: UseMutationResult<Task, unknown, { taskId: string; agentId: string }>
   move: UseMutationResult<Task, unknown, MoveTaskInput & { taskId: string }>
@@ -70,6 +73,7 @@ export interface TaskActions {
  * them; failures surface as toasts.
  */
 export function useTaskActions(): TaskActions {
+  const queryClient = useQueryClient()
   const invalidateTask = useInvalidateTask()
   const toast = useToast()
 
@@ -111,6 +115,44 @@ export function useTaskActions(): TaskActions {
     onSuccess: (task) => {
       invalidateTask(task)
       toast.success('Task approved', task.title)
+    },
+    onError,
+  })
+
+  const approvePlan = useMutation({
+    mutationFn: ({ taskId, plan }: { taskId: string; plan: ArchitectPlan }) =>
+      tasksApi.approve(taskId, plan),
+    onSuccess: (task) => {
+      invalidateTask(task)
+      toast.success('Plan approved', task.title)
+    },
+    onError,
+  })
+
+  const integrate = useMutation({
+    mutationFn: (taskId: string) => tasksApi.integrate(taskId),
+    onSuccess: (task) => {
+      invalidateTask(task)
+      toast.success('Task integrated', task.title)
+    },
+    onError: (error: unknown, taskId: string) => {
+      // A failed integration leaves the task parked with a (possibly new)
+      // blocked reason, so refresh before showing the message: the operator
+      // needs to see what to do next, not just that it failed. The project id is
+      // not known here, so the project-scoped keys are invalidated by prefix.
+      void queryClient.invalidateQueries({ queryKey: qk.task(taskId) })
+      void queryClient.invalidateQueries({ queryKey: qk.taskDetail(taskId) })
+      void queryClient.invalidateQueries({ queryKey: qk.projects })
+      void queryClient.invalidateQueries({ queryKey: qk.executions })
+      toast.error('Integration did not complete', errorMessage(error))
+    },
+  })
+
+  const resolveConflict = useMutation({
+    mutationFn: (taskId: string) => tasksApi.resolveConflict(taskId),
+    onSuccess: (task) => {
+      invalidateTask(task)
+      toast.success('Conflict handed to an agent', task.title)
     },
     onError,
   })
@@ -172,13 +214,16 @@ export function useTaskActions(): TaskActions {
         retry,
         cancel,
         approve,
+        approvePlan,
+        integrate,
+        resolveConflict,
         reject,
         reassign,
         move,
         addDependency,
         removeDependency,
       ].some((mutation) => busyTaskId(mutation as PendingLike) === taskId),
-    [start, retry, cancel, approve, reject, reassign, move, addDependency, removeDependency],
+    [start, retry, cancel, approve, approvePlan, integrate, resolveConflict, reject, reassign, move, addDependency, removeDependency],
   )
 
   return {
@@ -186,6 +231,9 @@ export function useTaskActions(): TaskActions {
     retry,
     cancel,
     approve,
+    approvePlan,
+    integrate,
+    resolveConflict,
     reject,
     reassign,
     move,
@@ -234,6 +282,8 @@ export function useProjectActions() {
       void queryClient.invalidateQueries({ queryKey: qk.board(projectId) })
       void queryClient.invalidateQueries({ queryKey: qk.projectAgents(projectId) })
       void queryClient.invalidateQueries({ queryKey: qk.projectWorkflow(projectId) })
+      void queryClient.invalidateQueries({ queryKey: qk.projectStaffing(projectId) })
+      void queryClient.invalidateQueries({ queryKey: qk.projectRepository(projectId) })
     },
     [queryClient],
   )
@@ -268,6 +318,22 @@ export function useProjectActions() {
     onError: (error) => toast.error('Could not delete project', errorMessage(error)),
   })
 
+  /** Re-run repository preparation and refresh the project's health. */
+  const ensureRepository = useMutation({
+    mutationFn: ({ projectId, init }: { projectId: string; init?: boolean }) =>
+      projectsApi.ensureRepository(projectId, init ?? false),
+    onSuccess: (status, variables) => {
+      void queryClient.invalidateQueries({ queryKey: qk.projectRepository(variables.projectId) })
+      void queryClient.invalidateQueries({ queryKey: qk.project(variables.projectId) })
+      if (status.ok) {
+        toast.success('Repository ready', status.target_branch ?? status.path)
+      } else {
+        toast.error('Repository is still not usable', status.error ?? 'unknown error')
+      }
+    },
+    onError: (error) => toast.error('Repository check failed', errorMessage(error)),
+  })
+
   const decompose = useMutation({
     mutationFn: ({ projectId, input }: { projectId: string; input: DecomposeInput }) =>
       projectsApi.decompose(projectId, input),
@@ -281,7 +347,7 @@ export function useProjectActions() {
           `${result.created_tasks?.length ?? 0} task(s) created`,
         )
       } else {
-        toast.info('Architect task queued', 'Approving it will persist the plan')
+        toast.info('Architect task queued', 'The architect proposes a draft plan for this issue')
       }
     },
     onError: (error) => toast.error('Decomposition failed', errorMessage(error)),
@@ -298,7 +364,7 @@ export function useProjectActions() {
     onError: (error) => toast.error('Import failed', errorMessage(error)),
   })
 
-  return { create, update, remove, decompose, importConfig, invalidateProject }
+  return { create, update, remove, ensureRepository, decompose, importConfig, invalidateProject }
 }
 
 export function useIssueActions(projectId: string | undefined) {

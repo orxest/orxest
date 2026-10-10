@@ -231,6 +231,18 @@ func (s *ExecutionService) run(exec *domain.Execution, task domain.Task, workflo
 
 	result := s.consume(ctx, execCtx.Done(), exec, handle)
 	timeoutCancel()
+	// A deadline is a timeout, not an operator cancellation: without this the
+	// workflow would treat an exhausted execution as a plain "cancelled" result
+	// and silently requeue it (spec §46, §47).
+	if runCtx.Err() == context.DeadlineExceeded {
+		result.Status = domain.ExecutionFailed
+		result.Outcome = domain.OutcomeFailure
+		result.FailureKind = domain.FailureTimeout
+		if result.Summary == "" {
+			result.Summary = fmt.Sprintf("execution exceeded the %s timeout", timeout)
+		}
+		result.Error = result.Summary
+	}
 	if result.Status == domain.ExecutionCompleted {
 		s.commitLeftovers(ctx, project, exec, agent, task.Title)
 	}
@@ -258,6 +270,7 @@ func (s *ExecutionService) prepareWorkspace(
 		Path:           project.TaskWorktreePath(task.ID),
 		Branch:         domain.BranchNameForTask(task.ID),
 		BaseBranch:     project.TargetBranch,
+		WorkspaceRoot:  project.WorktreeDir(),
 		Reuse:          true,
 		Force:          false,
 	})
@@ -309,14 +322,17 @@ func (s *ExecutionService) prepareWorkspace(
 	if issue, err := s.deps.Store.Issues().Get(ctx, task.IssueID); err == nil {
 		req.Issue = issue
 	}
-	if isDecompositionStep(step) {
+	if isDecompositionTask(task) {
 		req.OutputSchema = domain.ArchitectPlanSchema()
 	}
 	return req, nil
 }
 
-func isDecompositionStep(step domain.WorkflowStep) bool {
-	return step.RoleID == domain.RoleArchitect
+// isDecompositionTask reports whether a task is an architect planning task. It
+// is derived from the task kind, never from the role of the current step: an
+// opt-in design step inside an ordinary workflow is still ordinary work.
+func isDecompositionTask(task *domain.Task) bool {
+	return task != nil && task.Kind == domain.TaskKindDecomposition
 }
 
 func (s *ExecutionService) promptInput(
@@ -379,12 +395,13 @@ func (s *ExecutionService) recentReports(ctx context.Context, taskID string, lim
 	out := make([]ExecutionReport, 0, len(execs))
 	for _, e := range execs {
 		out = append(out, ExecutionReport{
-			Step:    e.WorkflowStepName,
-			Agent:   e.AgentName,
-			Outcome: outcomeLabel(e),
-			Summary: e.Summary,
-			Error:   e.Error,
-			Attempt: e.Attempt,
+			Step:        e.WorkflowStepName,
+			Agent:       e.AgentName,
+			Outcome:     outcomeLabel(e),
+			Summary:     e.Summary,
+			Error:       e.Error,
+			Attempt:     e.Attempt,
+			FailureKind: string(e.FailureKind),
 		})
 	}
 	return out, nil
@@ -643,8 +660,33 @@ func (s *ExecutionService) finalize(ctx context.Context, exec *domain.Execution,
 		if err := s.OnFinished(ctx, exec); err != nil {
 			s.log.ErrorContext(ctx, "workflow transition failed",
 				slog.String("execution_id", exec.ID), slog.String("error", err.Error()))
+			s.recoverStuckTask(ctx, exec, err)
 		}
 	}
+}
+
+// recoverStuckTask makes a transition failure explicit instead of leaving the
+// task in a state nothing will ever move it out of. A task is only touched when
+// it is still attached to the execution that just finished.
+func (s *ExecutionService) recoverStuckTask(ctx context.Context, exec *domain.Execution, cause error) {
+	task, err := s.reloadTask(ctx, exec.TaskID)
+	if err != nil {
+		return
+	}
+	if task.CurrentExecutionID != exec.ID {
+		return
+	}
+	if task.Status != domain.TaskRunning && task.Status != domain.TaskQueued {
+		return
+	}
+	reason := "workflow transition failed after the execution finished: " + cause.Error()
+	s.log.WarnContext(ctx, "recovering a task stuck after a transition failure",
+		slog.String("task_id", task.ID), slog.String("reason", reason))
+	_ = s.tasks.SetStatus(ctx, task, domain.TaskBlocked, statusOptions{
+		blockedReason: reason,
+		failureKind:   domain.FailureEnvironment,
+		error:         reason,
+	})
 }
 
 // fail records an execution that never reached the harness.

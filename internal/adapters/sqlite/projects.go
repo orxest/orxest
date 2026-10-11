@@ -15,7 +15,7 @@ type rowScanner interface {
 }
 
 const projectColumns = `id, name, slug, description, repository_path, repository_url,
-	target_branch, worktree_root, settings, created_at, updated_at`
+	target_branch, worktree_root, settings, paused_at, created_at, updated_at`
 
 type projectRepo struct{ q querier }
 
@@ -26,9 +26,9 @@ func (r *projectRepo) Create(ctx context.Context, p *domain.Project) error {
 	}
 	_, err = r.q.ExecContext(ctx, `
 		INSERT INTO projects (`+projectColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Name, p.Slug, p.Description, p.RepositoryPath, p.RepositoryURL,
-		p.TargetBranch, p.WorktreeRoot, settings,
+		p.TargetBranch, p.WorktreeRoot, settings, nullTime(p.PausedAt),
 		formatTime(p.CreatedAt), formatTime(p.UpdatedAt))
 	if isUniqueViolation(err) {
 		return domain.Conflictf("a project with slug %q already exists", p.Slug)
@@ -84,10 +84,11 @@ func (r *projectRepo) Update(ctx context.Context, p *domain.Project) error {
 	res, err := r.q.ExecContext(ctx, `
 		UPDATE projects SET
 			name = ?, slug = ?, description = ?, repository_path = ?, repository_url = ?,
-			target_branch = ?, worktree_root = ?, settings = ?, updated_at = ?
+			target_branch = ?, worktree_root = ?, settings = ?, paused_at = ?, updated_at = ?
 		WHERE id = ?`,
 		p.Name, p.Slug, p.Description, p.RepositoryPath, p.RepositoryURL,
-		p.TargetBranch, p.WorktreeRoot, settings, formatTime(p.UpdatedAt), p.ID)
+		p.TargetBranch, p.WorktreeRoot, settings, nullTime(p.PausedAt),
+		formatTime(p.UpdatedAt), p.ID)
 	if isUniqueViolation(err) {
 		return domain.Conflictf("a project with slug %q already exists", p.Slug)
 	}
@@ -109,17 +110,22 @@ func scanProject(row rowScanner) (*domain.Project, error) {
 	var (
 		p         domain.Project
 		settings  string
+		pausedAt  sql.NullString
 		createdAt string
 		updatedAt string
 	)
 	if err := row.Scan(&p.ID, &p.Name, &p.Slug, &p.Description, &p.RepositoryPath,
-		&p.RepositoryURL, &p.TargetBranch, &p.WorktreeRoot, &settings, &createdAt, &updatedAt); err != nil {
+		&p.RepositoryURL, &p.TargetBranch, &p.WorktreeRoot, &settings, &pausedAt,
+		&createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	if err := decodeJSON(settings, &p.Settings); err != nil {
 		return nil, err
 	}
 	var err error
+	if p.PausedAt, err = scanNullTime(pausedAt); err != nil {
+		return nil, err
+	}
 	if p.CreatedAt, err = parseTime(createdAt); err != nil {
 		return nil, err
 	}

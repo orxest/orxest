@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useTaskActions } from '@/hooks/mutations'
+import { agentOptions } from '@/features/agents/agentOptions'
 import type { ProjectAgentView, Task } from '@/types'
 
 /** Points the next execution of a task at a specific project agent. */
@@ -36,6 +37,9 @@ export function ReassignDialog({
 }) {
   const actions = useTaskActions()
   const [agentId, setAgentId] = React.useState(task.preferred_agent_id ?? '')
+  // One option per agent: an agent assigned to several roles must not produce
+  // several items with the same value.
+  const options = React.useMemo(() => agentOptions(agents), [agents])
 
   React.useEffect(() => {
     if (open) setAgentId(task.preferred_agent_id ?? '')
@@ -75,11 +79,11 @@ export function ReassignDialog({
                 <SelectValue placeholder="Select an agent" />
               </SelectTrigger>
               <SelectContent>
-                {agents.map((assignment) => (
-                  <SelectItem key={assignment.id} value={assignment.agent_id}>
+                {options.map((option) => (
+                  <SelectItem key={option.agentId} value={option.agentId}>
                     <span className="flex items-center gap-2">
-                      {assignment.agent.name}
-                      <Badge variant="muted">{assignment.role_id}</Badge>
+                      {option.agent.name}
+                      <Badge variant="muted">{option.roles.join(', ')}</Badge>
                     </span>
                   </SelectItem>
                 ))}

@@ -6,6 +6,7 @@ import type {
   Issue,
   ListResponse,
   OrxestEvent,
+  PauseResult,
   Project,
   ProjectAgentView,
   ProjectImportResult,
@@ -14,6 +15,7 @@ import type {
   ProjectSettings,
   ProjectStats,
   ReasoningLevel,
+  RetryFailedResult,
   Task,
   Workflow,
 } from '@/types'
@@ -121,6 +123,17 @@ export const projectsApi = {
 
   stats: (projectId: string) => request<ProjectStats>(`/projects/${projectId}/stats`),
 
+  /**
+   * Pauses the project: the scheduler starts no new work and every execution in
+   * flight is cancelled, its task returning to the ready queue until resume.
+   */
+  pause: (projectId: string) =>
+    request<PauseResult>(`/projects/${projectId}/pause`, { method: 'POST' }),
+
+  /** Resumes a paused project and dispatches the tasks the pause held. */
+  resume: (projectId: string) =>
+    request<Project>(`/projects/${projectId}/resume`, { method: 'POST' }),
+
   board: (projectId: string) => request<BoardResponse>(`/projects/${projectId}/board`),
 
   dependencies: (projectId: string) =>
@@ -171,4 +184,11 @@ export const projectsApi = {
 
   listProjectTasks: (projectId: string) =>
     request<ListResponse<Task>>(`/projects/${projectId}/tasks`),
+
+  /**
+   * Resets every failed task of the project: each one returns to the ready
+   * queue with a fresh attempt budget. Tasks in other statuses are untouched.
+   */
+  retryFailedTasks: (projectId: string) =>
+    request<RetryFailedResult>(`/projects/${projectId}/tasks/retry-failed`, { method: 'POST' }),
 }

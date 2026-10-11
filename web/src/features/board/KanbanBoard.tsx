@@ -1,13 +1,16 @@
 import { Inbox } from 'lucide-react'
 import * as React from 'react'
 
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { EmptyState } from '@/components/layout/EmptyState'
 import { Badge } from '@/components/ui/badge'
 import { TaskCard, useBusyTaskIds } from '@/features/board/TaskCard'
+import { dropTargetStatus, needsDropConfirmation } from '@/features/board/taskDrag'
 import { statusAccent } from '@/features/board/statusColors'
+import { useTaskActions } from '@/hooks/mutations'
 import { taskStatusMeta } from '@/lib/status'
 import { cn } from '@/lib/utils'
-import type { BoardColumn, BoardResponse, Task } from '@/types'
+import type { BoardColumn, BoardResponse, Task, TaskStatus } from '@/types'
 
 /** Priority first, then the explicit board order, then creation time. */
 function sortTasks(tasks: Task[]): Task[] {
@@ -22,6 +25,11 @@ function sortTasks(tasks: Task[]): Task[] {
 /**
  * The eight board columns returned by `GET /projects/{id}/board`, rendered as a
  * horizontally scrollable row of fixed-width columns.
+ *
+ * Columns are taller than the viewport, so the container's own horizontal
+ * scrollbar would sit below every card and be easy to miss. A mirrored scroll
+ * rail is rendered above the columns instead: it shares the content's scroll
+ * width, and the two scroll positions are kept in sync in both directions.
  */
 export function KanbanBoard({
   columns,
@@ -33,6 +41,29 @@ export function KanbanBoard({
   className?: string
 }) {
   const busyTaskIds = useBusyTaskIds()
+  const contentRef = React.useRef<HTMLDivElement>(null)
+  const railRef = React.useRef<HTMLDivElement>(null)
+  const [railWidth, setRailWidth] = React.useState(0)
+  const [canScroll, setCanScroll] = React.useState(false)
+
+  // Drag and drop between columns. The card carries its task in React state as
+  // well as in the data transfer, because dragover only exposes the data types.
+  const actions = useTaskActions()
+  const [dragTask, setDragTask] = React.useState<Task | null>(null)
+  const [hoverColumn, setHoverColumn] = React.useState<string | null>(null)
+  const [dropConfirm, setDropConfirm] = React.useState<{
+    task: Task
+    status: TaskStatus
+    column: string
+  } | null>(null)
+
+  const measure = React.useCallback(() => {
+    const content = contentRef.current
+    if (!content) return
+    const width = content.scrollWidth
+    setRailWidth(width)
+    setCanScroll(width > content.clientWidth + 1)
+  }, [])
 
   const sorted = React.useMemo(
     () =>
@@ -42,6 +73,49 @@ export function KanbanBoard({
       })),
     [columns],
   )
+
+  // The rail must mirror the content's scroll width exactly, so re-measure when
+  // the container, its row or its columns change size.
+  React.useEffect(() => {
+    const content = contentRef.current
+    if (!content) return
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(content)
+    for (const child of Array.from(content.children)) observer.observe(child)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [measure, sorted])
+
+  /** Either surface can drive; the other follows without looping. */
+  const syncFrom = (source: 'content' | 'rail') => () => {
+    const content = contentRef.current
+    const rail = railRef.current
+    if (!content || !rail) return
+    const from = source === 'content' ? content : rail
+    const to = source === 'content' ? rail : content
+    if (to.scrollLeft !== from.scrollLeft) to.scrollLeft = from.scrollLeft
+  }
+
+  const endDrag = () => {
+    setDragTask(null)
+    setHoverColumn(null)
+  }
+
+  /**
+   * Applies a drop. Terminal targets are confirmed first: they stop whatever is
+   * running on the task and bypass the rest of its workflow.
+   */
+  const moveTask = (task: Task, status: TaskStatus, column: string) => {
+    if (needsDropConfirmation(status)) {
+      setDropConfirm({ task, status, column })
+      return
+    }
+    actions.move.mutate({ taskId: task.id, status })
+  }
 
   if (sorted.length === 0) {
     return (
@@ -55,47 +129,139 @@ export function KanbanBoard({
   }
 
   return (
-    <div className={cn('overflow-x-auto pb-2', className)}>
-      <div className="flex min-w-max items-start gap-3">
-        {sorted.map((column) => {
-          const meta = taskStatusMeta(column.statuses[0])
-          return (
-            <section
-              key={column.key}
-              className="flex w-[290px] min-w-[290px] flex-col rounded-lg border border-border bg-card/60"
-              aria-label={`${column.title} column`}
-            >
-              <header className="sticky top-0 z-10 flex items-center gap-2 rounded-t-lg border-b border-border bg-card/95 px-2.5 py-2 backdrop-blur">
-                <span
-                  className={cn('h-4 w-1 shrink-0 rounded-full', statusAccent(column.statuses[0]))}
-                  aria-hidden
-                />
-                <h3 className="truncate text-xs font-semibold">{column.title}</h3>
-                <Badge variant={meta.variant} className="ml-auto">
-                  {column.tasks.length}
-                </Badge>
-              </header>
+    <div className={cn('flex flex-col', className)}>
+      {canScroll ? (
+        <div
+          ref={railRef}
+          onScroll={syncFrom('rail')}
+          aria-hidden
+          title="Scroll the board horizontally"
+          className="overflow-x-auto overflow-y-hidden"
+        >
+          <div style={{ width: railWidth }} className="h-px" />
+        </div>
+      ) : null}
 
-              <div className="flex max-h-[calc(100vh-330px)] flex-col gap-2 overflow-y-auto p-2">
-                {column.tasks.length === 0 ? (
-                  <p className="rounded-md border border-dashed border-border px-2 py-4 text-center text-[11px] text-muted-foreground">
-                    Nothing here
-                  </p>
-                ) : (
-                  column.tasks.map((task) => (
-                    <TaskCard
-                      key={task.id}
-                      task={task}
-                      board={board}
-                      busy={busyTaskIds.has(task.id)}
-                    />
-                  ))
+      <div
+        ref={contentRef}
+        onScroll={syncFrom('content')}
+        tabIndex={0}
+        role="region"
+        aria-label="Task board columns"
+        className={cn(
+          'overflow-x-auto pb-2',
+          'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+          '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+        )}
+      >
+        <div className="flex min-w-max items-start gap-3">
+          {sorted.map((column) => {
+            const meta = taskStatusMeta(column.statuses[0])
+            // While a card is being dragged, every column shows whether it can
+            // take it: legal targets stay lit, illegal ones fade out.
+            const target = dragTask ? dropTargetStatus(column, dragTask) : null
+            const isTarget = target !== null
+            const isHover = isTarget && hoverColumn === column.key
+            return (
+              <section
+                key={column.key}
+                aria-label={`${column.title} column`}
+                onDragOver={(event) => {
+                  if (!dragTask || !isTarget) return
+                  // Only a prevented dragover makes the element a drop target.
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  if (hoverColumn !== column.key) setHoverColumn(column.key)
+                }}
+                onDragLeave={(event) => {
+                  const next = event.relatedTarget as Node | null
+                  if (next && event.currentTarget.contains(next)) return
+                  setHoverColumn((current) => (current === column.key ? null : current))
+                }}
+                onDrop={(event) => {
+                  if (!dragTask || !target) return
+                  event.preventDefault()
+                  const dropped = dragTask
+                  endDrag()
+                  moveTask(dropped, target, column.title)
+                }}
+                className={cn(
+                  'flex w-[290px] min-w-[290px] flex-col rounded-lg border bg-card/60 transition-colors',
+                  isHover
+                    ? 'border-primary/60 bg-primary/5 ring-2 ring-primary/30'
+                    : 'border-border',
+                  dragTask && isTarget && !isHover && 'border-dashed border-primary/40',
+                  dragTask && !isTarget && 'opacity-50',
                 )}
-              </div>
-            </section>
-          )
-        })}
+              >
+                <header className="sticky top-0 z-10 flex items-center gap-2 rounded-t-lg border-b border-border bg-card/95 px-2.5 py-2 backdrop-blur">
+                  <span
+                    className={cn('h-4 w-1 shrink-0 rounded-full', statusAccent(column.statuses[0]))}
+                    aria-hidden
+                  />
+                  <h3 className="truncate text-xs font-semibold">{column.title}</h3>
+                  <Badge variant={meta.variant} className="ml-auto">
+                    {column.tasks.length}
+                  </Badge>
+                </header>
+
+                <div className="flex max-h-[calc(100vh-330px)] flex-col gap-2 overflow-y-auto p-2">
+                  {column.tasks.length === 0 ? (
+                    <p
+                      className={cn(
+                        'rounded-md border border-dashed px-2 py-4 text-center text-[11px] text-muted-foreground',
+                        isHover ? 'border-primary/50 text-foreground' : 'border-border',
+                      )}
+                    >
+                      {isHover ? `Drop to move here` : 'Nothing here'}
+                    </p>
+                  ) : (
+                    column.tasks.map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        board={board}
+                        busy={busyTaskIds.has(task.id)}
+                        dragging={dragTask?.id === task.id}
+                        onDragStart={setDragTask}
+                        onDragEnd={endDrag}
+                      />
+                    ))
+                  )}
+                </div>
+              </section>
+            )
+          })}
+        </div>
       </div>
+
+      <ConfirmDialog
+        open={dropConfirm !== null}
+        onOpenChange={(open) => {
+          if (!open) setDropConfirm(null)
+        }}
+        destructive={dropConfirm?.status === 'cancelled'}
+        title={dropConfirm ? `Move to ${dropConfirm.column}?` : ''}
+        description={
+          dropConfirm ? (
+            <>
+              <span className="font-medium">{dropConfirm.task.title}</span>{' '}
+              {dropConfirm.status === 'cancelled'
+                ? 'leaves the workflow: it is marked cancelled, and an execution still running for it is stopped. You can put it back in the backlog or the ready queue later.'
+                : 'is marked done immediately: the remaining workflow steps, the review gate and the branch integration do not run, and an execution still running for it is stopped.'}
+            </>
+          ) : null
+        }
+        confirmLabel={dropConfirm ? `Move to ${dropConfirm.column}` : 'Move'}
+        pending={actions.move.isPending}
+        onConfirm={() => {
+          if (!dropConfirm) return
+          actions.move.mutate(
+            { taskId: dropConfirm.task.id, status: dropConfirm.status },
+            { onSuccess: () => setDropConfirm(null) },
+          )
+        }}
+      />
     </div>
   )
 }

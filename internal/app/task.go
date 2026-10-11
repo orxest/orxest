@@ -597,6 +597,60 @@ func (s *TaskService) Retry(ctx context.Context, id string, in RetryInput) (*dom
 	return task, nil
 }
 
+// RetryFailedFailure reports one task a project-wide reset could not touch.
+type RetryFailedFailure struct {
+	TaskID string `json:"task_id"`
+	Title  string `json:"title"`
+	Error  string `json:"error"`
+}
+
+// RetryFailedResult summarises a project-wide reset of failed tasks.
+type RetryFailedResult struct {
+	// Retried lists the tasks that are back in the ready queue.
+	Retried []domain.Task `json:"retried"`
+	// Count is the number of tasks that were reset.
+	Count int `json:"count"`
+	// Errors lists the tasks that could not be reset. A failure here does not
+	// abort the others; the caller reports the partial outcome.
+	Errors []RetryFailedFailure `json:"errors"`
+}
+
+// RetryFailed resets every failed task of a project: each one goes back to the
+// ready queue with a fresh attempt budget, so a task that exhausted its retries
+// becomes runnable again (spec §47). Tasks in other statuses are left alone —
+// a blocked task waits for its cause (a dependency, an agent, a human) instead
+// of being forced ready — and history is never overwritten.
+//
+// The scheduler is woken once per reset task by Retry; the work itself is not
+// dispatched here, so the concurrency limits still apply.
+func (s *TaskService) RetryFailed(ctx context.Context, projectID string) (*RetryFailedResult, error) {
+	if _, err := s.deps.Store.Projects().Get(ctx, projectID); err != nil {
+		return nil, err
+	}
+	tasks, err := s.deps.Store.Tasks().List(ctx, repository.TaskFilter{
+		ProjectID: projectID,
+		Status:    domain.TaskFailed,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := &RetryFailedResult{Retried: []domain.Task{}, Errors: []RetryFailedFailure{}}
+	for i := range tasks {
+		task, err := s.Retry(ctx, tasks[i].ID, RetryInput{ResetAttempts: true})
+		if err != nil {
+			result.Errors = append(result.Errors, RetryFailedFailure{
+				TaskID: tasks[i].ID,
+				Title:  tasks[i].Title,
+				Error:  err.Error(),
+			})
+			continue
+		}
+		result.Retried = append(result.Retried, *task)
+	}
+	result.Count = len(result.Retried)
+	return result, nil
+}
+
 // Cancel stops a task, cancelling any running execution first.
 func (s *TaskService) Cancel(ctx context.Context, id string, cancelRunning func(executionID string) bool) (*domain.Task, error) {
 	task, err := s.deps.Store.Tasks().Get(ctx, id)
@@ -647,7 +701,12 @@ type MoveInput struct {
 
 // Move applies an explicit operator move: a status change and/or a workflow
 // step change. Transitions are still validated server-side (spec §28).
-func (s *TaskService) Move(ctx context.Context, id string, in MoveInput) (*domain.Task, error) {
+//
+// Moving a task to a terminal status takes it out of the workflow, so an
+// execution still in flight is cancelled (cancelRunning, when supplied). Without
+// that a force-completed task would keep an agent working on it, and the engine
+// would move it out of the terminal status again when that execution reported.
+func (s *TaskService) Move(ctx context.Context, id string, in MoveInput, cancelRunning func(executionID string) bool) (*domain.Task, error) {
 	task, err := s.deps.Store.Tasks().Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -667,8 +726,12 @@ func (s *TaskService) Move(ctx context.Context, id string, in MoveInput) (*domai
 		}
 	}
 	if in.Status != "" {
+		executionID := task.CurrentExecutionID
 		if err := s.SetStatus(ctx, task, in.Status, statusOptions{}); err != nil {
 			return nil, err
+		}
+		if in.Status.Terminal() && executionID != "" && cancelRunning != nil {
+			cancelRunning(executionID)
 		}
 	}
 	s.wake.Fire()

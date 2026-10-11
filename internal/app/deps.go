@@ -110,13 +110,14 @@ func New(deps Deps) *Service {
 	issues := NewIssueService(deps, tasks)
 	workflows := NewWorkflowService(deps)
 	agents := NewAgentService(deps)
-	projects := NewProjectService(deps, workflows, agents)
+	projects := NewProjectService(deps, workflows, agents, wake)
 	executions := NewExecutionService(deps, jobs, tasks)
 	scheduler := NewScheduler(deps, executions, tasks, wake)
 	engine := NewEngine(deps, tasks, executions, scheduler, issues)
 	planner := NewPlanner(deps, tasks, issues, workflows)
 	eventSvc := NewEventService(deps)
 	engine.SetPlanner(planner)
+	projects.SetExecutions(executions)
 	executions.OnFinished = engine.HandleExecutionResult
 	return &Service{
 		Deps:       deps,

@@ -277,10 +277,7 @@ func (e *Engine) complete(ctx context.Context, task *domain.Task, workflow *doma
 		}
 		if result.Conflict {
 			reason := integrationConflictReason(project, task, result)
-			if updateErr := e.blockWithExecution(ctx, task, exec, reason, domain.FailureIntegration); updateErr != nil {
-				return updateErr
-			}
-			return e.afterTransition(ctx, task, workflow, domain.WorkflowStep{}, reason)
+			return e.handleIntegrationConflict(ctx, task, workflow, exec, project, reason)
 		}
 		e.publishIntegrationWarnings(ctx, task, exec, result.Warnings)
 		if exec != nil && result.MergeCommitSHA != "" {
@@ -291,6 +288,8 @@ func (e *Engine) complete(ctx context.Context, task *domain.Task, workflow *doma
 			}
 		}
 	}
+	// The branch merged cleanly, so the task no longer carries conflict debt.
+	task.ConflictAttempts = 0
 	return e.markDone(ctx, task, workflow, exec, project)
 }
 
@@ -416,13 +415,16 @@ func (e *Engine) IntegrateTask(ctx context.Context, taskID string) (*domain.Task
 		}
 		if result.Conflict {
 			reason := integrationConflictReason(project, task, result)
-			if err := e.block(ctx, task, reason, domain.FailureIntegration); err != nil {
+			// The conflict is handled exactly as it is on the automatic path: an
+			// agent resolves it while the budget lasts, then it escalates.
+			if err := e.handleIntegrationConflict(ctx, task, workflow, nil, project, reason); err != nil {
 				return nil, err
 			}
 			return nil, integrationPendingf(reason)
 		}
 		e.publishIntegrationWarnings(ctx, task, nil, result.Warnings)
 	}
+	task.ConflictAttempts = 0
 	if err := e.markDone(ctx, task, workflow, nil, project); err != nil {
 		return nil, err
 	}
@@ -480,11 +482,107 @@ func integrationConflictReason(project *domain.Project, task *domain.Task, resul
 	return reason
 }
 
-// ResolveConflict sends a task blocked on an integration conflict back through
-// the workflow so a coding agent resolves the merge, instead of leaving it to a
-// human. The task's branch is unchanged: the agent is told to merge the target
-// branch into it, resolve the conflicts and commit, which is exactly what the
-// next integration attempt needs.
+// handleIntegrationConflict applies the project's conflict policy. Resolving a
+// merge is an agent responsibility (spec §25), so the conflict is handed back
+// through the workflow while the project's budget lasts. When the budget is
+// spent — or nothing in the workflow could resolve it — the conflict escalates
+// to a human, who can fix it by hand or hand it to an agent again.
+func (e *Engine) handleIntegrationConflict(
+	ctx context.Context,
+	task *domain.Task,
+	workflow *domain.Workflow,
+	exec *domain.Execution,
+	project *domain.Project,
+	reason string,
+) error {
+	limit := project.Settings.ConflictResolutions()
+	target := e.conflictResolveStep(workflow, task)
+	if target == "" {
+		return e.escalateConflict(ctx, task, workflow, exec, reason,
+			fmt.Sprintf("No step of workflow %q can resolve it, so this is a human decision.", workflow.Name))
+	}
+	if task.ConflictAttempts >= limit {
+		return e.escalateConflict(ctx, task, workflow, exec, reason,
+			fmt.Sprintf("Automatic resolution was attempted %d time(s) without success, so this is now a human decision: hand it back to an agent, or resolve and integrate it by hand.", limit))
+	}
+
+	task.ConflictAttempts++
+	task.CurrentWorkflowStep = target
+	if err := e.tasks.SetStatus(ctx, task, domain.TaskReady, statusOptions{clearFailure: true}); err != nil {
+		return err
+	}
+	// Record the conflict on the execution that produced the branch: the next
+	// prompt is built from those reports, which is how the agent learns what to
+	// merge and which files conflict.
+	e.markConflictOnExecution(ctx, task.ID, exec, reason)
+
+	message := fmt.Sprintf("integration conflict handed to the %q step for an agent to resolve (attempt %d/%d)",
+		target, task.ConflictAttempts, limit)
+	e.deps.publish(ctx, domain.Event{
+		ProjectID: task.ProjectID,
+		IssueID:   task.IssueID,
+		TaskID:    task.ID,
+		Type:      domain.EventTaskRework,
+		Message:   message,
+		Payload: map[string]any{
+			"step":    target,
+			"reason":  reason,
+			"attempt": task.ConflictAttempts,
+			"limit":   limit,
+		},
+		CreatedAt: e.deps.now(),
+	})
+	return e.afterTransition(ctx, task, workflow, domain.WorkflowStep{}, message)
+}
+
+// escalateConflict parks an integration conflict on the human. The task waits in
+// the blocked column with the failure kind the UI uses to offer "resolve with an
+// agent" and "integrate" again.
+func (e *Engine) escalateConflict(
+	ctx context.Context,
+	task *domain.Task,
+	workflow *domain.Workflow,
+	exec *domain.Execution,
+	reason string,
+	explanation string,
+) error {
+	escalated := strings.TrimSpace(reason + " " + explanation)
+	if err := e.blockWithExecution(ctx, task, exec, escalated, domain.FailureIntegration); err != nil {
+		return err
+	}
+	e.deps.publish(ctx, domain.Event{
+		ProjectID: task.ProjectID,
+		IssueID:   task.IssueID,
+		TaskID:    task.ID,
+		Type:      domain.EventTaskBlocked,
+		Message:   "integration conflict escalated to a human",
+		Payload:   map[string]any{"reason": escalated, "attempts": task.ConflictAttempts},
+		CreatedAt: e.deps.now(),
+	})
+	return e.afterTransition(ctx, task, workflow, domain.WorkflowStep{}, escalated)
+}
+
+// markConflictOnExecution records an integration conflict on the task's latest
+// execution, so the next execution's prompt contains the conflict instructions.
+func (e *Engine) markConflictOnExecution(ctx context.Context, taskID string, exec *domain.Execution, reason string) {
+	if exec == nil {
+		latest, err := e.deps.Store.Executions().List(ctx, repository.ExecutionFilter{TaskID: taskID, Limit: 1})
+		if err != nil || len(latest) == 0 {
+			return
+		}
+		exec = &latest[0]
+	}
+	exec.FailureKind = domain.FailureIntegration
+	exec.Summary = reason
+	if err := e.deps.Store.Executions().Update(ctx, exec); err != nil {
+		e.deps.logger().WarnContext(ctx, "recording the integration conflict on the execution failed",
+			"execution_id", exec.ID, "error", err.Error())
+	}
+}
+
+// ResolveConflict is the human's escalation response: a task blocked on an
+// integration conflict is handed to an agent again. The agent's budget is reset,
+// because a human has explicitly decided that the agent should try again.
 func (e *Engine) ResolveConflict(ctx context.Context, taskID string) (*domain.Task, error) {
 	task, err := e.deps.Store.Tasks().Get(ctx, taskID)
 	if err != nil {
@@ -497,24 +595,21 @@ func (e *Engine) ResolveConflict(ctx context.Context, taskID string) (*domain.Ta
 	if err != nil {
 		return nil, err
 	}
-	target := e.conflictResolveStep(workflow, task)
-	if target == "" {
+	if e.conflictResolveStep(workflow, task) == "" {
 		return nil, domain.Conflictf("workflow %q has no step an agent could resolve the conflict in", workflow.Name)
 	}
-	task.CurrentWorkflowStep = target
-	if err := e.tasks.SetStatus(ctx, task, domain.TaskReady, statusOptions{clearFailure: true}); err != nil {
+	project, err := e.deps.Store.Projects().Get(ctx, task.ProjectID)
+	if err != nil {
 		return nil, err
 	}
-	e.deps.publish(ctx, domain.Event{
-		ProjectID: task.ProjectID,
-		IssueID:   task.IssueID,
-		TaskID:    task.ID,
-		Type:      domain.EventTaskRework,
-		Message:   fmt.Sprintf("integration conflict handed to the %q step for an agent to resolve", target),
-		Payload:   map[string]any{"step": target, "reason": task.BlockedReason},
-		CreatedAt: e.deps.now(),
-	})
-	e.scheduler.Trigger()
+	reason := task.BlockedReason
+	if strings.TrimSpace(reason) == "" {
+		reason = fmt.Sprintf("integration conflict while merging %s into %s", task.BranchName, project.TargetBranch)
+	}
+	task.ConflictAttempts = 0
+	if err := e.handleIntegrationConflict(ctx, task, workflow, nil, project, reason); err != nil {
+		return nil, err
+	}
 	return e.deps.Store.Tasks().Get(ctx, taskID)
 }
 

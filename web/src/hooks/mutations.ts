@@ -18,7 +18,16 @@ import {
 import { workflowsApi, type WorkflowPayload } from '@/api/workflows'
 import { tasksApi, type MoveTaskInput, type RetryTaskInput, type UpdateTaskInput } from '@/api/tasks'
 import { useToast } from '@/hooks/useToast'
-import type { Agent, ArchitectPlan, Issue, Project, Task, Workflow } from '@/types'
+import type {
+  Agent,
+  ArchitectPlan,
+  Issue,
+  PauseResult,
+  Project,
+  RetryFailedResult,
+  Task,
+  Workflow,
+} from '@/types'
 
 /** Invalidates every cache entry a task mutation can affect. */
 export function useInvalidateTask() {
@@ -271,8 +280,92 @@ export function useDeleteTask() {
   })
 }
 
-export function useProjectActions() {
+/**
+ * Resets every failed task of a project: each one goes back to the ready queue
+ * with a fresh attempt budget. The API reports which tasks were reset and which
+ * ones could not be, so a partial outcome is still surfaced honestly.
+ */
+export function useRetryFailedTasks(projectId: string) {
   const queryClient = useQueryClient()
+  const toast = useToast()
+  return useMutation({
+    mutationFn: () => projectsApi.retryFailedTasks(projectId),
+    onSuccess: (result: RetryFailedResult) => {
+      void queryClient.invalidateQueries({ queryKey: qk.board(projectId) })
+      void queryClient.invalidateQueries({ queryKey: qk.projectStats(projectId) })
+      void queryClient.invalidateQueries({ queryKey: qk.projectIssues(projectId) })
+      void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'events'] })
+      void queryClient.invalidateQueries({ queryKey: qk.executions })
+
+      const failed = result.errors.length
+      if (failed > 0) {
+        toast.error(
+          `Reset ${result.count} of ${result.count + failed} failed tasks`,
+          `Could not reset ${result.errors[0].title}: ${result.errors[0].error}`,
+        )
+        return
+      }
+      if (result.count === 0) {
+        toast.info('No failed tasks to reset')
+        return
+      }
+      toast.success(
+        `Reset ${result.count} failed task${result.count === 1 ? '' : 's'}`,
+        'They are back in the ready queue with a fresh attempt budget.',
+      )
+    },
+    onError: (error) => toast.error('Could not reset failed tasks', errorMessage(error)),
+  })
+}
+
+/**
+ * Pauses and resumes a whole project (spec §45). Pausing holds every task: the
+ * scheduler starts nothing new and the executions in flight are cancelled, so
+ * their tasks wait in the ready queue until the operator resumes.
+ */
+export function useProjectPause(projectId: string) {
+  const queryClient = useQueryClient()
+  const toast = useToast()
+
+  const invalidate = React.useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: qk.project(projectId) })
+    void queryClient.invalidateQueries({ queryKey: qk.projects })
+    void queryClient.invalidateQueries({ queryKey: qk.board(projectId) })
+    void queryClient.invalidateQueries({ queryKey: qk.projectStats(projectId) })
+    void queryClient.invalidateQueries({ queryKey: qk.executions })
+    void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'events'] })
+  }, [queryClient, projectId])
+
+  const pause = useMutation({
+    mutationFn: () => projectsApi.pause(projectId),
+    onSuccess: (result: PauseResult) => {
+      invalidate()
+      const stopped = result.cancelled_count
+      toast.info(
+        'Project paused',
+        stopped === 0
+          ? 'No execution was running. Nothing new starts until you resume.'
+          : `${stopped} running execution${stopped === 1 ? '' : 's'} stopped; the task${
+              stopped === 1 ? '' : 's'
+            } wait${stopped === 1 ? 's' : ''} until you resume.`,
+      )
+    },
+    onError: (error) => toast.error('Could not pause the project', errorMessage(error)),
+  })
+
+  const resume = useMutation({
+    mutationFn: () => projectsApi.resume(projectId),
+    onSuccess: () => {
+      invalidate()
+      toast.success('Project resumed', 'Held tasks are dispatched again.')
+    },
+    onError: (error) => toast.error('Could not resume the project', errorMessage(error)),
+  })
+
+  return { pause, resume }
+}
+
+export function useProjectActions() {  const queryClient = useQueryClient()
   const toast = useToast()
 
   const invalidateProject = React.useCallback(

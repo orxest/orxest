@@ -13,17 +13,24 @@ import (
 )
 
 // ProjectService owns project lifecycle: creation, configuration, repository
-// preparation and deletion (spec §5, §44).
+// preparation, the operator's pause and deletion (spec §5, §44, §45).
 type ProjectService struct {
-	deps      Deps
-	workflows *WorkflowService
-	agents    *AgentService
+	deps       Deps
+	workflows  *WorkflowService
+	agents     *AgentService
+	executions *ExecutionService
+	wake       *trigger
 }
 
 // NewProjectService creates the service.
-func NewProjectService(deps Deps, workflows *WorkflowService, agents *AgentService) *ProjectService {
-	return &ProjectService{deps: deps, workflows: workflows, agents: agents}
+func NewProjectService(deps Deps, workflows *WorkflowService, agents *AgentService, wake *trigger) *ProjectService {
+	return &ProjectService{deps: deps, workflows: workflows, agents: agents, wake: wake}
 }
+
+// SetExecutions wires the execution service, which is built after the project
+// service because it depends on the task service. Pausing a project needs it to
+// stop the executions already in flight.
+func (s *ProjectService) SetExecutions(e *ExecutionService) { s.executions = e }
 
 // RepositoryStatus reports whether the project repository is usable.
 type RepositoryStatus struct {
@@ -359,6 +366,82 @@ func (s *ProjectService) Update(ctx context.Context, id string, in UpdateProject
 		Message:   "project " + project.Name + " updated",
 		CreatedAt: project.UpdatedAt,
 	})
+	return project, nil
+}
+
+// PauseResult reports what pausing a project did.
+type PauseResult struct {
+	// Project is the project as it now stands, with PausedAt set.
+	Project domain.Project `json:"project"`
+	// CancelledExecutions lists the in-flight executions the pause stopped.
+	CancelledExecutions []domain.Execution `json:"cancelled_executions"`
+	// CancelledCount is len(CancelledExecutions), for the UI.
+	CancelledCount int `json:"cancelled_count"`
+}
+
+// Pause holds a project: the scheduler starts no new work for it, and every
+// in-flight execution is cancelled so nothing keeps running while it is paused.
+//
+// A coding agent process cannot be frozen portably (spec §45), so work under way
+// is cancelled rather than suspended. The engine then returns each task to the
+// ready queue, where the pause holds it until the operator resumes; execution
+// history is preserved either way. Pausing an already paused project is a no-op
+// apart from sweeping up any execution that slipped through.
+func (s *ProjectService) Pause(ctx context.Context, id string) (*PauseResult, error) {
+	project, err := s.deps.Store.Projects().Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	result := &PauseResult{Project: *project, CancelledExecutions: []domain.Execution{}}
+	if project.PausedAt == nil {
+		now := s.deps.now()
+		project.PausedAt = &now
+		project.UpdatedAt = now
+		if err := s.deps.Store.Projects().Update(ctx, project); err != nil {
+			return nil, err
+		}
+		result.Project = *project
+		s.deps.publish(ctx, domain.Event{
+			ProjectID: project.ID,
+			Type:      domain.EventProjectPaused,
+			Message:   "project " + project.Name + " paused by operator",
+			CreatedAt: now,
+		})
+	}
+	if s.executions != nil {
+		cancelled, err := s.executions.CancelProject(ctx, project.ID)
+		if err != nil {
+			return nil, err
+		}
+		result.CancelledExecutions = cancelled
+		result.CancelledCount = len(cancelled)
+	}
+	return result, nil
+}
+
+// Resume clears the project pause and wakes the scheduler, so the tasks the
+// pause held are picked up again. Resuming a running project is a no-op.
+func (s *ProjectService) Resume(ctx context.Context, id string) (*domain.Project, error) {
+	project, err := s.deps.Store.Projects().Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if project.PausedAt == nil {
+		return project, nil
+	}
+	now := s.deps.now()
+	project.PausedAt = nil
+	project.UpdatedAt = now
+	if err := s.deps.Store.Projects().Update(ctx, project); err != nil {
+		return nil, err
+	}
+	s.deps.publish(ctx, domain.Event{
+		ProjectID: project.ID,
+		Type:      domain.EventProjectResumed,
+		Message:   "project " + project.Name + " resumed by operator",
+		CreatedAt: now,
+	})
+	s.wake.Fire()
 	return project, nil
 }
 

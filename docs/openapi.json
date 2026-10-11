@@ -513,6 +513,9 @@
               "name": {
                 "type": "string"
               },
+              "paused_at": {
+                "format": "date-time"
+              },
               "repository_path": {
                 "type": "string"
               },
@@ -546,6 +549,9 @@
                   "max_concurrent_executions": {
                     "type": "integer"
                   },
+                  "max_conflict_resolutions": {
+                    "type": "integer"
+                  },
                   "require_clean_worktree": {
                     "type": "boolean"
                   }
@@ -557,7 +563,8 @@
                   "keep_worktrees",
                   "require_clean_worktree",
                   "commit_agent_changes",
-                  "auto_accept_plans"
+                  "auto_accept_plans",
+                  "max_conflict_resolutions"
                 ],
                 "type": "object"
               },
@@ -845,6 +852,9 @@
               "max_concurrent_executions": {
                 "type": "integer"
               },
+              "max_conflict_resolutions": {
+                "type": "integer"
+              },
               "require_clean_worktree": {
                 "type": "boolean"
               }
@@ -856,7 +866,8 @@
               "keep_worktrees",
               "require_clean_worktree",
               "commit_agent_changes",
-              "auto_accept_plans"
+              "auto_accept_plans",
+              "max_conflict_resolutions"
             ]
           },
           "target_branch": {
@@ -1186,6 +1197,9 @@
                 "completed_at": {
                   "format": "date-time"
                 },
+                "conflict_attempts": {
+                  "type": "integer"
+                },
                 "created_at": {
                   "format": "date-time",
                   "type": "string"
@@ -1270,6 +1284,7 @@
                 "current_workflow_step",
                 "attempt_count",
                 "max_attempts",
+                "conflict_attempts",
                 "order_index",
                 "created_at",
                 "updated_at"
@@ -1298,6 +1313,9 @@
               },
               "completed_at": {
                 "format": "date-time"
+              },
+              "conflict_attempts": {
+                "type": "integer"
               },
               "created_at": {
                 "format": "date-time",
@@ -1383,6 +1401,7 @@
               "current_workflow_step",
               "attempt_count",
               "max_attempts",
+              "conflict_attempts",
               "order_index",
               "created_at",
               "updated_at"
@@ -1910,6 +1929,282 @@
         ],
         "type": "object"
       },
+      "PauseResult": {
+        "additionalProperties": false,
+        "properties": {
+          "cancelled_count": {
+            "type": "integer"
+          },
+          "cancelled_executions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "agent_id": {
+                  "type": "string"
+                },
+                "agent_name": {
+                  "type": "string"
+                },
+                "attempt": {
+                  "type": "integer"
+                },
+                "branch_name": {
+                  "type": "string"
+                },
+                "changed_files": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "commit_sha": {
+                  "type": "string"
+                },
+                "commit_subject": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "diff_stat": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "exit_code": {},
+                "failure_kind": {
+                  "type": "string"
+                },
+                "finished_at": {
+                  "format": "date-time"
+                },
+                "harness": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "issue_id": {
+                  "type": "string"
+                },
+                "log_path": {
+                  "type": "string"
+                },
+                "merge_commit_sha": {
+                  "type": "string"
+                },
+                "merged_into_branch": {
+                  "type": "string"
+                },
+                "metrics": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cache_read_tokens": {
+                      "type": "integer"
+                    },
+                    "cache_write_tokens": {
+                      "type": "integer"
+                    },
+                    "cost_usd": {
+                      "type": "number"
+                    },
+                    "input_tokens": {
+                      "type": "integer"
+                    },
+                    "output_tokens": {
+                      "type": "integer"
+                    },
+                    "reasoning_tokens": {
+                      "type": "integer"
+                    },
+                    "steps": {
+                      "type": "integer"
+                    },
+                    "total_tokens": {
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string"
+                },
+                "output_ref": {
+                  "type": "string"
+                },
+                "project_id": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string"
+                },
+                "reasoning": {
+                  "type": "string"
+                },
+                "result": {
+                  "additionalProperties": {},
+                  "type": "object"
+                },
+                "role_id": {
+                  "type": "string"
+                },
+                "started_at": {
+                  "format": "date-time"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "task_id": {
+                  "type": "string"
+                },
+                "workflow_id": {
+                  "type": "string"
+                },
+                "workflow_step_id": {
+                  "type": "string"
+                },
+                "workflow_step_name": {
+                  "type": "string"
+                },
+                "workspace_path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "task_id",
+                "issue_id",
+                "agent_id",
+                "agent_name",
+                "role_id",
+                "workflow_id",
+                "workflow_step_id",
+                "workflow_step_name",
+                "harness",
+                "status",
+                "attempt",
+                "metrics",
+                "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "project": {
+            "additionalProperties": false,
+            "properties": {
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "paused_at": {
+                "format": "date-time"
+              },
+              "repository_path": {
+                "type": "string"
+              },
+              "repository_url": {
+                "type": "string"
+              },
+              "settings": {
+                "additionalProperties": false,
+                "properties": {
+                  "auto_accept_plans": {
+                    "type": "boolean"
+                  },
+                  "auto_integrate": {
+                    "type": "boolean"
+                  },
+                  "commit_agent_changes": {
+                    "type": "boolean"
+                  },
+                  "default_max_attempts": {
+                    "type": "integer"
+                  },
+                  "git_author_email": {
+                    "type": "string"
+                  },
+                  "git_author_name": {
+                    "type": "string"
+                  },
+                  "keep_worktrees": {
+                    "type": "boolean"
+                  },
+                  "max_concurrent_executions": {
+                    "type": "integer"
+                  },
+                  "max_conflict_resolutions": {
+                    "type": "integer"
+                  },
+                  "require_clean_worktree": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "max_concurrent_executions",
+                  "default_max_attempts",
+                  "auto_integrate",
+                  "keep_worktrees",
+                  "require_clean_worktree",
+                  "commit_agent_changes",
+                  "auto_accept_plans",
+                  "max_conflict_resolutions"
+                ],
+                "type": "object"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "target_branch": {
+                "type": "string"
+              },
+              "updated_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "worktree_root": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "slug",
+              "description",
+              "repository_path",
+              "target_branch",
+              "settings",
+              "created_at",
+              "updated_at"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "project",
+          "cancelled_executions",
+          "cancelled_count"
+        ],
+        "type": "object"
+      },
       "Project": {
         "additionalProperties": false,
         "properties": {
@@ -1925,6 +2220,9 @@
           },
           "name": {
             "type": "string"
+          },
+          "paused_at": {
+            "format": "date-time"
           },
           "repository_path": {
             "type": "string"
@@ -1959,6 +2257,9 @@
               "max_concurrent_executions": {
                 "type": "integer"
               },
+              "max_conflict_resolutions": {
+                "type": "integer"
+              },
               "require_clean_worktree": {
                 "type": "boolean"
               }
@@ -1970,7 +2271,8 @@
               "keep_worktrees",
               "require_clean_worktree",
               "commit_agent_changes",
-              "auto_accept_plans"
+              "auto_accept_plans",
+              "max_conflict_resolutions"
             ],
             "type": "object"
           },
@@ -2379,6 +2681,9 @@
               "name": {
                 "type": "string"
               },
+              "paused_at": {
+                "format": "date-time"
+              },
               "repository_path": {
                 "type": "string"
               },
@@ -2412,6 +2717,9 @@
                   "max_concurrent_executions": {
                     "type": "integer"
                   },
+                  "max_conflict_resolutions": {
+                    "type": "integer"
+                  },
                   "require_clean_worktree": {
                     "type": "boolean"
                   }
@@ -2423,7 +2731,8 @@
                   "keep_worktrees",
                   "require_clean_worktree",
                   "commit_agent_changes",
-                  "auto_accept_plans"
+                  "auto_accept_plans",
+                  "max_conflict_resolutions"
                 ],
                 "type": "object"
               },
@@ -2613,6 +2922,9 @@
           "max_concurrent_executions": {
             "type": "integer"
           },
+          "max_conflict_resolutions": {
+            "type": "integer"
+          },
           "require_clean_worktree": {
             "type": "boolean"
           }
@@ -2624,7 +2936,8 @@
           "keep_worktrees",
           "require_clean_worktree",
           "commit_agent_changes",
-          "auto_accept_plans"
+          "auto_accept_plans",
+          "max_conflict_resolutions"
         ],
         "type": "object"
       },
@@ -2702,6 +3015,181 @@
           "target_branch",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "RetryFailedFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "title",
+          "error"
+        ],
+        "type": "object"
+      },
+      "RetryFailedResult": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "errors": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "error": {
+                  "type": "string"
+                },
+                "task_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "task_id",
+                "title",
+                "error"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "retried": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "acceptance_criteria": {
+                  "type": "string"
+                },
+                "attempt_count": {
+                  "type": "integer"
+                },
+                "blocked_reason": {
+                  "type": "string"
+                },
+                "branch_name": {
+                  "type": "string"
+                },
+                "commit_sha": {
+                  "type": "string"
+                },
+                "completed_at": {
+                  "format": "date-time"
+                },
+                "conflict_attempts": {
+                  "type": "integer"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "current_execution_id": {
+                  "type": "string"
+                },
+                "current_workflow_step": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "failure_kind": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "issue_id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "labels": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "last_error": {
+                  "type": "string"
+                },
+                "max_attempts": {
+                  "type": "integer"
+                },
+                "order_index": {
+                  "type": "integer"
+                },
+                "preferred_agent_id": {
+                  "type": "string"
+                },
+                "priority": {
+                  "type": "integer"
+                },
+                "project_id": {
+                  "type": "string"
+                },
+                "started_at": {
+                  "format": "date-time"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "workflow_id": {
+                  "type": "string"
+                },
+                "workspace_path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "issue_id",
+                "title",
+                "description",
+                "priority",
+                "status",
+                "acceptance_criteria",
+                "labels",
+                "kind",
+                "workflow_id",
+                "current_workflow_step",
+                "attempt_count",
+                "max_attempts",
+                "conflict_attempts",
+                "order_index",
+                "created_at",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "retried",
+          "count",
+          "errors"
         ],
         "type": "object"
       },
@@ -2936,6 +3424,9 @@
           "completed_at": {
             "format": "date-time"
           },
+          "conflict_attempts": {
+            "type": "integer"
+          },
           "created_at": {
             "format": "date-time",
             "type": "string"
@@ -3020,6 +3511,7 @@
           "current_workflow_step",
           "attempt_count",
           "max_attempts",
+          "conflict_attempts",
           "order_index",
           "created_at",
           "updated_at"
@@ -3097,6 +3589,9 @@
               "max_concurrent_executions": {
                 "type": "integer"
               },
+              "max_conflict_resolutions": {
+                "type": "integer"
+              },
               "require_clean_worktree": {
                 "type": "boolean"
               }
@@ -3108,7 +3603,8 @@
               "keep_worktrees",
               "require_clean_worktree",
               "commit_agent_changes",
-              "auto_accept_plans"
+              "auto_accept_plans",
+              "max_conflict_resolutions"
             ]
           },
           "target_branch": {},
@@ -6253,6 +6749,87 @@
         ]
       }
     },
+    "/api/projects/{id}/pause": {
+      "post": {
+        "parameters": [
+          {
+            "description": "Project id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PauseResult"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PauseResult"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflicting state"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "summary": "Pause the project: hold every task and cancel the executions in flight",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
     "/api/projects/{id}/repository": {
       "get": {
         "parameters": [
@@ -6409,6 +6986,87 @@
           }
         },
         "summary": "Prepare or re-check the repository",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/projects/{id}/resume": {
+      "post": {
+        "parameters": [
+          {
+            "description": "Project id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflicting state"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "summary": "Resume a paused project and dispatch the tasks the pause held",
         "tags": [
           "projects"
         ]
@@ -6698,6 +7356,87 @@
           }
         },
         "summary": "List the tasks of a project",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/projects/{id}/tasks/retry-failed": {
+      "post": {
+        "parameters": [
+          {
+            "description": "Project id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryFailedResult"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryFailedResult"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflicting state"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "summary": "Reset every failed task of a project back to the ready queue with a fresh attempt budget",
         "tags": [
           "tasks"
         ]

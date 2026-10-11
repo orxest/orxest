@@ -218,6 +218,8 @@ export const EVENT_TYPE_ICON_COLORS: Record<string, BadgeVariant> = {
   'issue.updated': 'info',
   'project.created': 'success',
   'project.updated': 'info',
+  'project.paused': 'warning',
+  'project.resumed': 'info',
   'workflow.updated': 'purple',
   'agent.configured': 'info',
 }

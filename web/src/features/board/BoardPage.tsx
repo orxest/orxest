@@ -6,6 +6,7 @@ import {
   Link2,
   Network,
   RefreshCw,
+  RotateCcw,
   Search,
   Workflow,
   X,
@@ -13,6 +14,7 @@ import {
 import * as React from 'react'
 import { Link, useParams } from 'react-router-dom'
 
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { IdChip } from '@/components/common/IdChip'
 import { EmptyState } from '@/components/layout/EmptyState'
 import { ErrorAlert } from '@/components/layout/ErrorState'
@@ -33,6 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DependencyEdgesTable, DependencyGraph } from '@/features/board/DependencyGraph'
 import { KanbanBoard } from '@/features/board/KanbanBoard'
 import { STATUS_LEGEND } from '@/features/board/statusColors'
+import { useRetryFailedTasks } from '@/hooks/mutations'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useBoard } from '@/hooks/queries'
 import { PRIORITY_OPTIONS, TASK_STATUS_META, TASK_STATUS_ORDER } from '@/lib/status'
@@ -105,6 +108,11 @@ export function BoardPage() {
   const [search, setSearch] = React.useState('')
   const [priorityFilter, setPriorityFilter] = React.useState('all')
   const [showDone, setShowDone] = React.useState(false)
+  // The number of failed tasks captured when the dialog opens, or null when the
+  // dialog is closed. Freezing it keeps the wording stable while the request is
+  // in flight and the board refetches with nothing left to reset.
+  const [resetCount, setResetCount] = React.useState<number | null>(null)
+  const resetFailed = useRetryFailedTasks(projectId)
 
   const debouncedSearch = useDebouncedValue(search, 250)
   const board = query.data
@@ -261,6 +269,10 @@ export function BoardPage() {
     )
   }
 
+  // The reset acts on the whole project, not on the filtered view, so the
+  // project-level failed count drives the button.
+  const failedCount = board.stats.task_status.failed ?? 0
+
   return (
     <div className="flex flex-col gap-4">
       {header}
@@ -323,6 +335,20 @@ export function BoardPage() {
               {showDone ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
               Done / cancelled
             </Button>
+
+            {failedCount > 0 ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setResetCount(failedCount)}
+                title="Return every failed task of this project to the ready queue with a fresh attempt budget"
+                className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                <RotateCcw className="size-3.5" />
+                Reset failed
+                <span className="font-mono">{failedCount}</span>
+              </Button>
+            ) : null}
 
             <span className="ml-auto text-[11px] text-muted-foreground">
               {filteredTasks.length} / {allTasks.length} shown
@@ -391,6 +417,29 @@ export function BoardPage() {
           />
         </TabsContent>
       </Tabs>
+
+      <ConfirmDialog
+        open={resetCount !== null}
+        onOpenChange={(open) => {
+          if (!open) setResetCount(null)
+        }}
+        title={`Reset ${resetCount ?? 0} failed task${resetCount === 1 ? '' : 's'}?`}
+        description={
+          <>
+            Every task in the failed column of this project returns to the ready queue with a fresh
+            attempt budget and its failure cleared, so tasks that exhausted their retries can run
+            again. Tasks in other columns — blocked, review, running — are left untouched, and the
+            execution history of each task is preserved.
+          </>
+        }
+        confirmLabel={`Reset ${resetCount ?? 0} task${resetCount === 1 ? '' : 's'}`}
+        pending={resetFailed.isPending}
+        onConfirm={() =>
+          resetFailed.mutate(undefined, {
+            onSuccess: () => setResetCount(null),
+          })
+        }
+      />
     </div>
   )
 }

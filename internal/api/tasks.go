@@ -158,6 +158,17 @@ func (s *Server) handleRetryTask(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, task)
 }
 
+// handleRetryFailedProjectTasks resets every failed task of a project back to
+// the ready queue with a fresh attempt budget.
+func (s *Server) handleRetryFailedProjectTasks(w http.ResponseWriter, r *http.Request) {
+	result, err := s.svc.Tasks.RetryFailed(r.Context(), pathValue(r, "id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request) {
 	id := pathValue(r, "id")
 	task, err := s.svc.Tasks.Cancel(r.Context(), id, func(executionID string) bool {
@@ -246,7 +257,10 @@ func (s *Server) handleMoveTask(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	task, err := s.svc.Tasks.Move(r.Context(), pathValue(r, "id"), in)
+	id := pathValue(r, "id")
+	task, err := s.svc.Tasks.Move(r.Context(), id, in, func(string) bool {
+		return s.svc.Executions.CancelByTask(r.Context(), id)
+	})
 	if err != nil {
 		s.fail(w, r, err)
 		return

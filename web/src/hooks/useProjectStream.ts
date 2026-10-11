@@ -99,6 +99,13 @@ export function useProjectStream(
     schedule(qk.projectStats(projectId))
     schedule(['projects', projectId, 'events'])
 
+    // Project level events carry the record itself: a pause or resume decided in
+    // another tab has to reach this one's header and settings.
+    if (type.startsWith('project.')) {
+      schedule(qk.project(projectId))
+      schedule(qk.projects)
+    }
+
     if (payload.task_id) {
       schedule(qk.taskDetail(payload.task_id))
       schedule(qk.task(payload.task_id))

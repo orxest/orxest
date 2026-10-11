@@ -14,8 +14,8 @@ import (
 const taskColumns = `id, project_id, issue_id, title, description, priority, status,
 	acceptance_criteria, labels, kind, preferred_agent_id, workflow_id,
 	current_workflow_step, attempt_count, max_attempts, current_execution_id,
-	workspace_path, branch_name, commit_sha, blocked_reason, failure_kind, last_error,
-	order_index, created_at, updated_at, started_at, completed_at`
+	conflict_attempts, workspace_path, branch_name, commit_sha, blocked_reason,
+	failure_kind, last_error, order_index, created_at, updated_at, started_at, completed_at`
 
 type taskRepo struct{ q querier }
 
@@ -26,13 +26,13 @@ func (r *taskRepo) Create(ctx context.Context, t *domain.Task) error {
 	}
 	_, err = r.q.ExecContext(ctx, `
 		INSERT INTO tasks (`+taskColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.ProjectID, t.IssueID, t.Title, t.Description, t.Priority, string(t.Status),
 		t.AcceptanceCriteria, labels, string(t.Kind), t.PreferredAgentID, t.WorkflowID,
 		t.CurrentWorkflowStep, t.AttemptCount, t.MaxAttempts, t.CurrentExecutionID,
-		t.WorkspacePath, t.BranchName, t.CommitSHA, t.BlockedReason, string(t.FailureKind),
-		t.LastError, t.OrderIndex, formatTime(t.CreatedAt), formatTime(t.UpdatedAt),
-		nullTime(t.StartedAt), nullTime(t.CompletedAt))
+		t.ConflictAttempts, t.WorkspacePath, t.BranchName, t.CommitSHA, t.BlockedReason,
+		string(t.FailureKind), t.LastError, t.OrderIndex, formatTime(t.CreatedAt),
+		formatTime(t.UpdatedAt), nullTime(t.StartedAt), nullTime(t.CompletedAt))
 	if isForeignKeyViolation(err) {
 		return notFound("issue", t.IssueID)
 	}
@@ -109,15 +109,16 @@ func (r *taskRepo) Update(ctx context.Context, t *domain.Task) error {
 			title = ?, description = ?, priority = ?, status = ?, acceptance_criteria = ?,
 			labels = ?, kind = ?, preferred_agent_id = ?, workflow_id = ?,
 			current_workflow_step = ?, attempt_count = ?, max_attempts = ?,
-			current_execution_id = ?, workspace_path = ?, branch_name = ?, commit_sha = ?,
-			blocked_reason = ?, failure_kind = ?, last_error = ?, order_index = ?,
-			updated_at = ?, started_at = ?, completed_at = ?
+			current_execution_id = ?, conflict_attempts = ?, workspace_path = ?,
+			branch_name = ?, commit_sha = ?, blocked_reason = ?, failure_kind = ?,
+			last_error = ?, order_index = ?, updated_at = ?, started_at = ?, completed_at = ?
 		WHERE id = ?`,
 		t.Title, t.Description, t.Priority, string(t.Status), t.AcceptanceCriteria,
 		labels, string(t.Kind), t.PreferredAgentID, t.WorkflowID, t.CurrentWorkflowStep,
-		t.AttemptCount, t.MaxAttempts, t.CurrentExecutionID, t.WorkspacePath,
-		t.BranchName, t.CommitSHA, t.BlockedReason, string(t.FailureKind), t.LastError,
-		t.OrderIndex, formatTime(t.UpdatedAt), nullTime(t.StartedAt), nullTime(t.CompletedAt), t.ID)
+		t.AttemptCount, t.MaxAttempts, t.CurrentExecutionID, t.ConflictAttempts,
+		t.WorkspacePath, t.BranchName, t.CommitSHA, t.BlockedReason, string(t.FailureKind),
+		t.LastError, t.OrderIndex, formatTime(t.UpdatedAt), nullTime(t.StartedAt),
+		nullTime(t.CompletedAt), t.ID)
 	if err != nil {
 		return fmt.Errorf("sqlite: updating task: %w", err)
 	}
@@ -299,8 +300,9 @@ func scanTask(row rowScanner) (*domain.Task, error) {
 	if err := row.Scan(&t.ID, &t.ProjectID, &t.IssueID, &t.Title, &t.Description, &t.Priority,
 		&status, &t.AcceptanceCriteria, &labels, &kind, &t.PreferredAgentID, &t.WorkflowID,
 		&t.CurrentWorkflowStep, &t.AttemptCount, &t.MaxAttempts, &t.CurrentExecutionID,
-		&t.WorkspacePath, &t.BranchName, &t.CommitSHA, &t.BlockedReason, &failureKind,
-		&t.LastError, &t.OrderIndex, &createdAt, &updatedAt, &startedAt, &completedAt); err != nil {
+		&t.ConflictAttempts, &t.WorkspacePath, &t.BranchName, &t.CommitSHA, &t.BlockedReason,
+		&failureKind, &t.LastError, &t.OrderIndex, &createdAt, &updatedAt, &startedAt,
+		&completedAt); err != nil {
 		return nil, err
 	}
 	t.Status = domain.TaskStatus(status)

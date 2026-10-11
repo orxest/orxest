@@ -151,25 +151,31 @@
   }
 }
 
+/* A dialog is centred by Tailwind's `-translate-*` utilities, which compile to
+   the CSS `translate` property rather than `transform`. The two properties
+   compose, so these keyframes must not carry a translate of their own: doing so
+   offsets the dialog by half its size for the whole animation, which reads as
+   "it opens at the top left and then jumps to the centre". Only opacity and
+   scale are animated here; the base `translate` keeps it centred throughout. */
 @keyframes orxest-pop-in {
   from {
     opacity: 0;
-    transform: translate(-50%, -48%) scale(0.97);
+    transform: scale(0.97);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
+    transform: scale(1);
   }
 }
 
 @keyframes orxest-pop-out {
   from {
     opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
+    transform: scale(1);
   }
   to {
     opacity: 0;
-    transform: translate(-50%, -50%) scale(0.97);
+    transform: scale(0.97);
   }
 }
 

@@ -64,6 +64,27 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handlePauseProject holds a project: no new work is dispatched, and the
+// executions already in flight are cancelled.
+func (s *Server) handlePauseProject(w http.ResponseWriter, r *http.Request) {
+	result, err := s.svc.Projects.Pause(r.Context(), pathValue(r, "id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+// handleResumeProject clears the pause so held tasks are dispatched again.
+func (s *Server) handleResumeProject(w http.ResponseWriter, r *http.Request) {
+	project, err := s.svc.Projects.Resume(r.Context(), pathValue(r, "id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, project)
+}
+
 func (s *Server) handleProjectStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := s.svc.Projects.Stats(r.Context(), pathValue(r, "id"))
 	if err != nil {

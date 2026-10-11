@@ -30,9 +30,17 @@ type Project struct {
 
 	Settings ProjectSettings `json:"settings"`
 
+	// PausedAt records when an operator paused the project. While it is set the
+	// scheduler starts no new work for the project (spec §45); resuming clears
+	// it. A timestamp rather than a flag keeps "since when" observable.
+	PausedAt *time.Time `json:"paused_at,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+// Paused reports whether an operator paused the project.
+func (p Project) Paused() bool { return p.PausedAt != nil }
 
 // ProjectSettings holds orchestration policy that is configurable per project.
 type ProjectSettings struct {
@@ -58,11 +66,19 @@ type ProjectSettings struct {
 	// stops in the "review" state with the plan as a draft, and a human approves
 	// or rejects it before any task is created.
 	AutoAcceptPlans bool `json:"auto_accept_plans"`
+	// MaxConflictResolutions is how many times Orxest hands an integration
+	// conflict back to a coding agent to resolve before escalating it to a human
+	// (spec §25). Zero means the default.
+	MaxConflictResolutions int `json:"max_conflict_resolutions"`
 	// GitAuthorName/Email are used for Orxest generated commits (for example
 	// merges) when set.
 	GitAuthorName  string `json:"git_author_name,omitempty"`
 	GitAuthorEmail string `json:"git_author_email,omitempty"`
 }
+
+// DefaultConflictResolutions is how many agent attempts a project gets to
+// resolve an integration conflict before it escalates to a human.
+const DefaultConflictResolutions = 2
 
 // DefaultProjectSettings returns the policy applied to a new project.
 func DefaultProjectSettings() ProjectSettings {
@@ -74,7 +90,18 @@ func DefaultProjectSettings() ProjectSettings {
 		RequireCleanWorktree:    true,
 		CommitAgentChanges:      true,
 		AutoAcceptPlans:         false,
+		MaxConflictResolutions:  DefaultConflictResolutions,
 	}
+}
+
+// ConflictResolutions is the number of agent attempts allowed to resolve an
+// integration conflict. Projects created before the setting existed (or with it
+// left at zero) get the default.
+func (s ProjectSettings) ConflictResolutions() int {
+	if s.MaxConflictResolutions > 0 {
+		return s.MaxConflictResolutions
+	}
+	return DefaultConflictResolutions
 }
 
 // WorktreeDir resolves the directory that holds this project's worktrees.

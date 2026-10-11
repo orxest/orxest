@@ -33,10 +33,10 @@ is implemented, and any deliberate deviation. Status values:
 | 22 | Execution states separate from task states | done | `domain/execution.go`, `domain/task.go` state machines |
 | 23 | Git integration: one worktree + branch per task, reused across executions | done | `internal/adapters/git`, `orxest/task/<id>` |
 | 24 | Worktree lifecycle incl. safe cleanup | done | `CreateWorktree`/`RemoveWorktree`, cleanup policy in `Engine.cleanupWorktree` |
-| 25 | Task integration as a clean merge with explicit conflict | done | `Engine.integrate` (merge prepared in an Orxest-managed worktree), `integration`, `integration_conflict` |
+| 25 | Task integration as a clean merge with explicit conflict | done | `Engine.integrate` (merge prepared in an Orxest-managed worktree), `integration`, `integration_conflict`. Resolving the merge is an **agent** responsibility: `Engine.handleIntegrationConflict` hands a conflicting branch back to a workflow step (the next prompt carries the conflict and the files to merge, `prompt.go`), bounded by the project's `max_conflict_resolutions` and counted in `tasks.conflict_attempts`. Only when that budget is spent does it escalate to a human (`Engine.escalateConflict`), who can hand it back to an agent (`POST /api/tasks/{id}/resolve-conflict`) or fix it by hand |
 | 26 | Scheduler rules (7 checks) | done | `Scheduler.Tick` / `evaluateTask` |
 | 27 | Configurable concurrency (global/project/agent) | done | `orchestration` config, project settings, agent settings |
-| 28 | Board as a projection, validated transitions | done | `GET /api/projects/{id}/board`, `TaskService.Move` |
+| 28 | Board as a projection, validated transitions | done | `GET /api/projects/{id}/board`, `TaskService.Move`; dragging a card between columns and the "Move status / step" menu both call the same validated move endpoint, and a move to a terminal status stops an execution in flight |
 | 29 | Project dashboard (summary, board, activity, running agents, dependency graph, history) | done | `web/src/features/*`, board/stats/dependencies/events endpoints |
 | 30 | Task view | done | `GET /api/tasks/{id}/detail`, `web/src/features/tasks/TaskDetailPage.tsx` |
 | 31 | Execution view (agent, model, reasoning, elapsed, live logs, changed files) | done | `web/src/features/executions/*`, execution stream + `/log` |
@@ -53,9 +53,9 @@ is implemented, and any deliberate deviation. Status values:
 | 42 | REST API + OpenAPI | done | `internal/api/*`, `docs/openapi.json` (regenerate with `make openapi`) |
 | 43 | Configuration file per project, DB authoritative | done | `internal/app/configfile.go`, `examples/project.yaml` |
 | 44 | Project creation flow (manual and architect-assisted) | done | `CreateProjectInput`, `Planner.Decompose` |
-| 45 | Human control: start/pause/resume/cancel/retry/approve/reject/reassign/change stage | done (differs) | `TaskService` + `Engine`; pause/resume are **not** supported because a coding agent process cannot be paused portably — cancel + retry covers the need, and the API has no pause endpoints |
+| 45 | Human control: start/pause/resume/cancel/retry/approve/reject/reassign/change stage | done (differs) | `TaskService` + `Engine`; **project level** pause/resume is implemented as a dispatch hold: `POST /api/projects/{id}/pause` sets `projects.paused_at`, the scheduler skips paused projects, and the executions in flight are cancelled (a task returns to the ready queue and is held until resume). Freezing a running agent process is still **not** supported — a coding agent cannot be suspended portably, so work in progress is cancelled rather than paused |
 | 46 | Distinguish agent/environment/task/review/integration failures | done | `domain.FailureKind` + `dependency_incomplete` and `agent_blocked` |
-| 47 | Retry policy, new execution per retry | done | per-step attempt budget; `POST /api/tasks/{id}/retry` |
+| 47 | Retry policy, new execution per retry | done | per-step attempt budget; `POST /api/tasks/{id}/retry`; `POST /api/projects/{id}/tasks/retry-failed` resets every failed task of a project with a fresh budget (board: "Reset failed") |
 | 48 | Observability (transitions, assignment, execution, errors, commits, integration) | done | `events`, `execution_events`, structured logs |
 | 49 | Security boundaries | done | explicit process arguments, no shell, validated plan output, path guards, no secrets in prompts/logs |
 | 50 | MVP scope | done | see the capability table in `README.md` |

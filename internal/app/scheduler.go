@@ -145,6 +145,11 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 	}
 
 	for _, project := range projects {
+		// A paused project is held by the operator: nothing new starts, and the
+		// tasks the pause returned to the queue wait until it resumes (spec §45).
+		if project.Paused() {
+			continue
+		}
 		if globalActive >= globalLimit {
 			break
 		}

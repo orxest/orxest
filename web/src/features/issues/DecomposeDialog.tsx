@@ -35,6 +35,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useProjectActions } from '@/hooks/mutations'
 import { useTaskDetail } from '@/hooks/queries'
 import { PRIORITY_OPTIONS } from '@/lib/status'
+import { agentOptions } from '@/features/agents/agentOptions'
 import { IssueField } from '@/features/issues/IssueField'
 import { PlanDraftReview } from '@/features/issues/PlanDraftReview'
 import {
@@ -102,6 +103,9 @@ export function DecomposeDialog({
   const [planText, setPlanText] = React.useState('')
   const [result, setResult] = React.useState<DecomposeResult | null>(null)
   const [submitError, setSubmitError] = React.useState<unknown>(null)
+  // One option per agent: an agent assigned to several roles must not produce
+  // several items with the same value.
+  const options = React.useMemo(() => agentOptions(agents), [agents])
 
   // Poll the queued planning task so the draft plan appears on its own once
   // the architect execution finishes and the task parks in `review`. Polling
@@ -396,9 +400,10 @@ export function DecomposeDialog({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value={DEFAULT_AGENT_VALUE}>Default (architect role)</SelectItem>
-                      {agents.map((assignment) => (
-                        <SelectItem key={assignment.id} value={assignment.agent_id}>
-                          {assignment.agent.name} · {assignment.role.name}
+                      {options.map((option) => (
+                        <SelectItem key={option.agentId} value={option.agentId}>
+                          {option.agent.name}
+                          {option.roles.length > 0 ? ` · ${option.roles.join(', ')}` : ''}
                         </SelectItem>
                       ))}
                     </SelectContent>

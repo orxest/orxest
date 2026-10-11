@@ -10,6 +10,8 @@ export const PROJECT_STREAM_EVENTS: readonly string[] = [
   STREAM_READY,
   'project.created',
   'project.updated',
+  'project.paused',
+  'project.resumed',
   'issue.created',
   'issue.updated',
   'task.created',

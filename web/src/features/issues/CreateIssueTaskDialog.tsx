@@ -29,6 +29,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { useIssueActions } from '@/hooks/mutations'
 import { PRIORITY_OPTIONS } from '@/lib/status'
+import { agentOptions } from '@/features/agents/agentOptions'
 import { IssueField } from '@/features/issues/IssueField'
 import {
   DEFAULT_AGENT_VALUE,
@@ -62,6 +63,9 @@ export function CreateIssueTaskDialog({
 }) {
   const actions = useIssueActions(projectId)
   const [submitError, setSubmitError] = React.useState<unknown>(null)
+  // One option per agent: an agent assigned to several roles must not produce
+  // several items with the same value.
+  const options = React.useMemo(() => agentOptions(agents), [agents])
 
   const form = useForm<IssueTaskFormValues>({
     resolver: zodResolver(issueTaskFormSchema),
@@ -211,9 +215,10 @@ export function CreateIssueTaskDialog({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value={DEFAULT_AGENT_VALUE}>Default (workflow role)</SelectItem>
-                      {agents.map((assignment) => (
-                        <SelectItem key={assignment.id} value={assignment.agent_id}>
-                          {assignment.agent.name} · {assignment.role.name}
+                      {options.map((option) => (
+                        <SelectItem key={option.agentId} value={option.agentId}>
+                          {option.agent.name}
+                          {option.roles.length > 0 ? ` · ${option.roles.join(', ')}` : ''}
                         </SelectItem>
                       ))}
                     </SelectContent>

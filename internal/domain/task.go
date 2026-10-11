@@ -202,6 +202,10 @@ type Task struct {
 	AttemptCount       int    `json:"attempt_count"`
 	MaxAttempts        int    `json:"max_attempts"`
 	CurrentExecutionID string `json:"current_execution_id,omitempty"`
+	// ConflictAttempts counts how many times an integration conflict has been
+	// handed back to an agent. The project's max_conflict_resolutions bounds it;
+	// once that budget is spent the conflict escalates to a human (spec §25).
+	ConflictAttempts int `json:"conflict_attempts"`
 
 	// WorkspacePath and BranchName describe the isolated Git workspace of the
 	// task (spec §23).
@@ -270,6 +274,9 @@ func (t *Task) Validate() error {
 	}
 	if t.AttemptCount < 0 {
 		return Invalidf("attempt_count", "must not be negative")
+	}
+	if t.ConflictAttempts < 0 {
+		return Invalidf("conflict_attempts", "must not be negative")
 	}
 	return nil
 }

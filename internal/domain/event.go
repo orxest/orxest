@@ -7,6 +7,10 @@ import "time"
 const (
 	EventProjectCreated = "project.created"
 	EventProjectUpdated = "project.updated"
+	// EventProjectPaused/EventProjectResumed record the operator's project level
+	// pause, which holds every task of the project (spec §45).
+	EventProjectPaused  = "project.paused"
+	EventProjectResumed = "project.resumed"
 	EventIssueCreated   = "issue.created"
 	EventIssueUpdated   = "issue.updated"
 	EventTaskCreated    = "task.created"

@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Hint } from '@/components/ui/tooltip'
 import { TaskActionsMenu } from '@/features/board/TaskActionsMenu'
+import { TASK_DRAG_MIME } from '@/features/board/taskDrag'
 import { roleLabel, truncate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { BoardResponse, Task } from '@/types'
@@ -60,19 +61,30 @@ function attemptsLabel(task: Task): string {
 /**
  * Dense kanban card. Owns no data fetching: the board query is passed down so
  * issues, agents and workflow are read without extra requests.
+ *
+ * The card is draggable between board columns when the board supplies drag
+ * handlers; the action menu stays the accessible path to the same transitions.
  */
 export function TaskCard({
   task,
   board,
   busy = false,
+  dragging = false,
+  onDragStart,
+  onDragEnd,
   className,
 }: {
   task: Task
   board: BoardResponse
   busy?: boolean
+  /** True while this card is the one being dragged. */
+  dragging?: boolean
+  onDragStart?: (task: Task) => void
+  onDragEnd?: () => void
   className?: string
 }) {
   const navigate = useNavigate()
+  const draggable = Boolean(onDragStart) && !busy
 
   const issueTitle = React.useMemo(
     () => board.issues.find((issue) => issue.id === task.issue_id)?.title,
@@ -136,16 +148,32 @@ export function TaskCard({
 
   return (
     <Card
+      draggable={draggable}
+      onDragStart={(event) => {
+        if (!draggable) {
+          event.preventDefault()
+          return
+        }
+        event.dataTransfer.setData(TASK_DRAG_MIME, task.id)
+        event.dataTransfer.setData('text/plain', task.title)
+        event.dataTransfer.effectAllowed = 'move'
+        onDragStart?.(task)
+      }}
+      onDragEnd={() => onDragEnd?.()}
       className={cn(
         'flex flex-col gap-2 p-2.5 transition-opacity',
         busy && 'opacity-60',
+        draggable && 'cursor-grab active:cursor-grabbing',
+        dragging && 'opacity-40',
         className,
       )}
       aria-busy={busy}
+      title={draggable ? 'Drag to another column to change its status' : undefined}
     >
       <div className="flex items-start justify-between gap-2">
         <Link
           to={`/tasks/${task.id}`}
+          draggable={false}
           className="line-clamp-2 min-w-0 text-sm font-medium leading-snug hover:underline"
         >
           {task.title}

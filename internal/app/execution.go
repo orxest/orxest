@@ -229,7 +229,27 @@ func (s *ExecutionService) run(exec *domain.Execution, task domain.Task, workflo
 		Data:    startData,
 	})
 
+	// Cancelling the execution context — an operator cancel, a project pause, the
+	// execution timeout or a shutdown — has to stop the agent process, not just
+	// stop waiting for it. The harness handle owns that: adapters terminate the
+	// process group they started.
+	watcherStop := make(chan struct{})
+	var watcherOnce sync.Once
+	stopWatcher := func() { watcherOnce.Do(func() { close(watcherStop) }) }
+	defer stopWatcher()
+	go func() {
+		select {
+		case <-runCtx.Done():
+			if err := handle.Cancel(context.Background()); err != nil {
+				s.log.WarnContext(ctx, "cancelling the harness failed",
+					slog.String("execution_id", exec.ID), slog.String("error", err.Error()))
+			}
+		case <-watcherStop:
+		}
+	}()
+
 	result := s.consume(ctx, execCtx.Done(), exec, handle)
+	stopWatcher()
 	timeoutCancel()
 	// A deadline is a timeout, not an operator cancellation: without this the
 	// workflow would treat an exhausted execution as a plain "cancelled" result
@@ -774,7 +794,34 @@ func (s *ExecutionService) CancelByTask(ctx context.Context, taskID string) bool
 	return s.jobs.Cancel(execs[0].ID, errCancelledByOperator)
 }
 
-var errCancelledByOperator = errors.New("cancelled by operator")
+// CancelProject stops every in-flight execution of a project, which is what
+// pausing a project does to work already under way. Each cancelled execution
+// settles asynchronously; the engine then returns its task to the ready queue,
+// where a paused project holds it until the operator resumes.
+//
+// Executions left over from a previous process have no job to cancel and are
+// skipped: startup reconciliation already settled them.
+func (s *ExecutionService) CancelProject(ctx context.Context, projectID string) ([]domain.Execution, error) {
+	execs, err := s.deps.Store.Executions().List(ctx, repository.ExecutionFilter{
+		ProjectID: projectID,
+		Statuses:  []domain.ExecutionStatus{domain.ExecutionPending, domain.ExecutionStarting, domain.ExecutionRunning},
+	})
+	if err != nil {
+		return nil, err
+	}
+	cancelled := make([]domain.Execution, 0, len(execs))
+	for i := range execs {
+		if s.jobs.Cancel(execs[i].ID, errCancelledByProjectPause) {
+			cancelled = append(cancelled, execs[i])
+		}
+	}
+	return cancelled, nil
+}
+
+var (
+	errCancelledByOperator     = errors.New("cancelled by operator")
+	errCancelledByProjectPause = errors.New("cancelled because the project was paused")
+)
 
 // Get returns one execution.
 func (s *ExecutionService) Get(ctx context.Context, id string) (*domain.Execution, error) {

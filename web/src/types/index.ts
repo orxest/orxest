@@ -64,6 +64,8 @@ export interface ProjectSettings {
   commit_agent_changes: boolean
   /** When false (default), an architect plan waits for human approval. */
   auto_accept_plans?: boolean
+  /** Agent attempts allowed to resolve an integration conflict before it escalates to a human. */
+  max_conflict_resolutions?: number
   git_author_name?: string
   git_author_email?: string
 }
@@ -78,8 +80,17 @@ export interface Project {
   target_branch: string
   worktree_root?: string
   settings: ProjectSettings
+  /** Set while an operator has paused the project: nothing new is dispatched. */
+  paused_at?: string
   created_at: string
   updated_at: string
+}
+
+/** Result of pausing a project (POST /projects/{id}/pause). */
+export interface PauseResult {
+  project: Project
+  cancelled_executions: Execution[]
+  cancelled_count: number
 }
 
 export interface Issue {
@@ -111,6 +122,8 @@ export interface Task {
   current_workflow_step: string
   attempt_count: number
   max_attempts: number
+  /** Times an integration conflict has been handed back to an agent (spec §25). */
+  conflict_attempts: number
   current_execution_id?: string
   workspace_path?: string
   branch_name?: string
@@ -296,6 +309,20 @@ export interface TaskDependencyStatus {
   task_id: string
   title: string
   status: TaskStatus
+}
+
+/** One task a project-wide "reset failed" could not touch. */
+export interface RetryFailedFailure {
+  task_id: string
+  title: string
+  error: string
+}
+
+/** Result of resetting every failed task of a project (POST /projects/{id}/tasks/retry-failed). */
+export interface RetryFailedResult {
+  retried: Task[]
+  count: number
+  errors: RetryFailedFailure[]
 }
 
 export interface TaskDetail {

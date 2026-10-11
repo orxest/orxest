@@ -7,22 +7,27 @@ import {
   LayoutGrid,
   Link2,
   ListTodo,
+  Pause,
+  Play,
   Workflow as WorkflowIcon,
   type LucideIcon,
 } from 'lucide-react'
+import * as React from 'react'
 import { Link, NavLink, Outlet, useParams } from 'react-router-dom'
 
 import { ApiError } from '@/api/client'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { IdChip } from '@/components/common/IdChip'
 import { StatusDot } from '@/components/common/StatusBadge'
 import { ErrorAlert } from '@/components/layout/ErrorState'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge, type BadgeVariant } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ProjectStatsBar } from '@/features/projects/ProjectStatsBar'
 import { useProject, useProjectRepository, useProjectStats } from '@/hooks/queries'
-import { useProjectActions } from '@/hooks/mutations'
+import { useProjectActions, useProjectPause } from '@/hooks/mutations'
 import type { StreamStatus } from '@/hooks/useEventStream'
 import { useNow } from '@/hooks/useNow'
 import { useProjectStream } from '@/hooks/useProjectStream'
@@ -100,6 +105,12 @@ function SettingsBadges({ project }: { project: Project }) {
         ? 'Validated architect plans are persisted without a human review'
         : 'An architect plan waits for a human decision before any task is scheduled',
       variant: settings.auto_accept_plans ? 'muted' : 'purple',
+    },
+    {
+      label: `conflict resolutions ${settings.max_conflict_resolutions ?? 2}`,
+      title:
+        'How many times an agent is asked to merge the target branch and resolve a conflict before it escalates to a human',
+      variant: 'outline',
     },
   ]
 
@@ -209,6 +220,11 @@ export function ProjectLayout() {
   const statsQuery = useProjectStats(projectId)
   const streamStatus = useProjectStream(projectId, { enabled: projectQuery.isSuccess })
   const project = projectQuery.data
+  // The pause dialog is confirmed in the shell, so the count of executions the
+  // pause is about to stop is captured when it opens (the project query then
+  // refetches with the pause applied).
+  const [pauseTarget, setPauseTarget] = React.useState<number | null>(null)
+  const control = useProjectPause(projectId ?? '')
 
   if (projectQuery.isLoading) return <ProjectLayoutSkeleton />
 
@@ -237,6 +253,8 @@ export function ProjectLayout() {
   }
 
   const stream = STREAM_STATE[streamStatus]
+  const paused = Boolean(project.paused_at)
+  const runningExecutions = statsQuery.data?.running_executions ?? 0
 
   return (
     <div className="flex flex-col gap-4">
@@ -248,17 +266,48 @@ export function ProjectLayout() {
               {project.slug}
             </Badge>
             <IdChip value={project.id} />
+            {paused ? (
+              <Badge variant="warning" title={`Paused ${formatDateTime(project.paused_at ?? '')}`}>
+                <Pause className="size-3" />
+                paused
+              </Badge>
+            ) : null}
           </span>
         }
         description={project.description?.trim() || 'No description'}
         actions={
-          <span
-            className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground"
-            title="Live updates arrive over the project Server-Sent Events stream"
-          >
-            <StatusDot variant={stream.variant} pulsing={stream.pulsing} />
-            {stream.label}
-          </span>
+          <>
+            {paused ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => control.resume.mutate()}
+                disabled={control.resume.isPending}
+                title="Resume the project and dispatch the tasks the pause held"
+              >
+                <Play className="size-3.5" />
+                Resume project
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPauseTarget(runningExecutions)}
+                title="Pause the project: no new work starts and running executions are stopped"
+                className="border-amber-500/40 text-amber-700 hover:bg-amber-500/10 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-400"
+              >
+                <Pause className="size-3.5" />
+                Pause project
+              </Button>
+            )}
+            <span
+              className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground"
+              title="Live updates arrive over the project Server-Sent Events stream"
+            >
+              <StatusDot variant={stream.variant} pulsing={stream.pulsing} />
+              {stream.label}
+            </span>
+          </>
         }
         meta={
           <>
@@ -288,6 +337,30 @@ export function ProjectLayout() {
           </>
         }
       />
+
+      {paused ? (
+        <Alert variant="warning">
+          <Pause className="mt-0.5" />
+          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <AlertTitle>Project paused</AlertTitle>
+              <AlertDescription>
+                No new work is dispatched and the executions that were running were stopped. Every
+                task waits where it is until you resume.
+              </AlertDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => control.resume.mutate()}
+              disabled={control.resume.isPending}
+            >
+              <Play className="size-3.5" />
+              Resume project
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
 
       <ProjectStatsBar projectId={project.id} stats={statsQuery} />
 
@@ -320,6 +393,38 @@ export function ProjectLayout() {
       </nav>
 
       <Outlet />
+
+      <ConfirmDialog
+        open={pauseTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setPauseTarget(null)
+        }}
+        title="Pause this project?"
+        destructive
+        description={
+          <>
+            Every task of this project is held: the scheduler starts nothing new, and
+            {pauseTarget === null || pauseTarget === 0
+              ? ' no execution is running right now. '
+              : ` the ${pauseTarget} execution${pauseTarget === 1 ? '' : 's'} running right now ${
+                  pauseTarget === 1 ? 'is' : 'are'
+                } cancelled. `}
+            A stopped execution leaves its task in the ready queue, so that work starts again from the
+            same step when you resume the project. Execution history is preserved.
+          </>
+        }
+        confirmLabel={
+          pauseTarget === null || pauseTarget === 0
+            ? 'Pause project'
+            : `Pause and stop ${pauseTarget} execution${pauseTarget === 1 ? '' : 's'}`
+        }
+        pending={control.pause.isPending}
+        onConfirm={() =>
+          control.pause.mutate(undefined, {
+            onSuccess: () => setPauseTarget(null),
+          })
+        }
+      />
     </div>
   )
 }

@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -43,11 +44,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DependencyEdgesTable, DependencyGraph } from '@/features/board/DependencyGraph'
 import { KanbanBoard } from '@/features/board/KanbanBoard'
 import { STATUS_LEGEND } from '@/features/board/statusColors'
+import { RejectDialog } from '@/features/board/RejectDialog'
 import { ContainerList } from '@/features/tasks/ContainerList'
 import { CreateTaskDialog } from '@/features/tasks/CreateTaskDialog'
 import { PlanWorkDialog } from '@/features/tasks/PlanWorkDialog'
 import { TaskListRow } from '@/features/tasks/TaskListRow'
-import { useRetryFailedTasks } from '@/hooks/mutations'
+import { useRetryFailedTasks, useTaskActions } from '@/hooks/mutations'
 import { useBoard, useProjectAgents, useProjectWorkflow } from '@/hooks/queries'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { PRIORITY_OPTIONS, TASK_STATUS_META, TASK_STATUS_ORDER } from '@/lib/status'
@@ -163,6 +165,9 @@ function StatsStrip({ stats }: { stats: ProjectStats }) {
 
 function PlanningJobRow({ task, now }: { task: Task; now: number }) {
   const running = task.status === 'running' || task.status === 'queued'
+  // A plan waiting for a human decision is actionable straight from the board,
+  // so approving or rejecting it does not require opening the plan detail.
+  const awaitingDecision = task.kind === 'decomposition' && task.status === 'review'
   return (
     <li className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border bg-muted/20 px-2 py-1.5">
       {running ? (
@@ -177,7 +182,7 @@ function PlanningJobRow({ task, now }: { task: Task; now: number }) {
       <Link
         to={`/tasks/${task.id}`}
         className="min-w-0 flex-1 truncate text-xs font-medium hover:underline"
-        title={task.title}
+        title={awaitingDecision ? 'Open the proposed plan' : task.title}
       >
         {task.title}
       </Link>
@@ -191,7 +196,58 @@ function PlanningJobRow({ task, now }: { task: Task; now: number }) {
         {relativeTime(task.updated_at, now)}
       </span>
       <IdChip value={task.id} />
+      {awaitingDecision ? <PlanDecisionActions task={task} /> : null}
     </li>
+  )
+}
+
+/**
+ * Approve and reject a draft plan without leaving the board. The same mutations
+ * back the plan detail page, so both surfaces stay consistent; a validation
+ * failure surfaces as a toast and leaves the draft in place.
+ */
+function PlanDecisionActions({ task }: { task: Task }) {
+  const actions = useTaskActions()
+  const busy = actions.isBusy(task.id)
+  const [approveOpen, setApproveOpen] = React.useState(false)
+  const [rejectOpen, setRejectOpen] = React.useState(false)
+
+  return (
+    <>
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={busy}
+        onClick={() => setApproveOpen(true)}
+        title="Approve this plan and create its tasks"
+      >
+        <Check className="size-3" />
+        Approve
+      </Button>
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={busy}
+        onClick={() => setRejectOpen(true)}
+        title="Reject this plan so the architect proposes another one"
+      >
+        <X className="size-3" />
+        Reject
+      </Button>
+
+      <ConfirmDialog
+        open={approveOpen}
+        onOpenChange={setApproveOpen}
+        title="Approve this plan?"
+        description={`“${task.title}” creates its tasks and dependencies when approved. Nothing is scheduled before that.`}
+        confirmLabel="Approve plan"
+        pending={actions.approve.isPending}
+        onConfirm={() =>
+          actions.approve.mutate(task.id, { onSuccess: () => setApproveOpen(false) })
+        }
+      />
+      <RejectDialog task={task} open={rejectOpen} onOpenChange={setRejectOpen} />
+    </>
   )
 }
 

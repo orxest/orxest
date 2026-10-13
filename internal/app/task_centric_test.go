@@ -756,3 +756,93 @@ func TestHierarchyAndDependencyGuards(t *testing.T) {
 		t.Error("expected reparenting a container under its own descendant to be refused")
 	}
 }
+
+// TestBoardPlanningJobIsActionableFromTheBoard pins the contract the board's
+// inline approve/reject buttons depend on: a plan awaiting a decision appears in
+// the board's planning jobs as a `decomposition` task in `review`, so the surface
+// can offer the decision without opening the plan detail page.
+func TestBoardPlanningJobIsActionableFromTheBoard(t *testing.T) {
+	ctx := context.Background()
+	repo := testsupport.Repository(t, "main")
+	harness := fake.New(
+		fake.WithoutWork(),
+		fake.WithScript("decomposition", fake.Step{
+			Outcome: domain.OutcomeSuccess,
+			Summary: "one task",
+			Result: map[string]any{
+				"tasks": []any{map[string]any{
+					"ref": "t1", "title": "Add the endpoint",
+					"description": "d", "acceptance_criteria": "ac",
+				}},
+			},
+		}),
+	)
+	svc := testsupport.Service(t, testsupport.Options{Harnesses: harnesses(harness)})
+	project, err := svc.Projects.Create(ctx, app.CreateProjectInput{
+		Name:             "Board plan decisions",
+		RepositoryPath:   repo,
+		TargetBranch:     "main",
+		WorkflowTemplate: "minimal",
+		Agents: []app.CreateProjectAgentInput{
+			{Name: "arch", Harness: "fake", Role: domain.RoleArchitect},
+			{Name: "dev", Harness: "fake", Role: domain.RoleDeveloper},
+		},
+	})
+	if err != nil {
+		t.Fatalf("creating project: %v", err)
+	}
+	result, err := svc.Planner.Decompose(ctx, project.Project.ID, app.DecomposeInput{Request: "add an endpoint"})
+	if err != nil {
+		t.Fatalf("decompose: %v", err)
+	}
+	drive(t, svc, "the draft to await a decision", func() bool {
+		return loadTask(t, svc, result.Task.ID).Status == domain.TaskReview
+	})
+
+	// Exactly what the board response carries: the planning job, with the kind
+	// and status the action buttons key off.
+	jobs, err := svc.Tasks.PlanningTasks(ctx, project.Project.ID)
+	if err != nil {
+		t.Fatalf("listing planning jobs: %v", err)
+	}
+	var job *domain.Task
+	for i := range jobs {
+		if jobs[i].ID == result.Task.ID {
+			job = &jobs[i]
+		}
+	}
+	if job == nil {
+		t.Fatalf("the plan awaiting a decision must appear in the board's planning jobs")
+	}
+	if job.Kind != domain.TaskKindDecomposition {
+		t.Errorf("expected a decomposition record, got kind %q", job.Kind)
+	}
+	if job.Status != domain.TaskReview {
+		t.Fatalf("expected the planning job to be in review, got %s", job.Status)
+	}
+
+	// The plan jobs are never counted as project work, even while actionable.
+	stats, err := svc.Projects.Stats(ctx, project.Project.ID)
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	if stats.Planning != 1 || stats.Tasks != 0 {
+		t.Errorf("a pending plan must not count as work: %+v", stats)
+	}
+
+	// Approving straight from the board creates the proposed tasks.
+	approved, err := svc.Engine.Approve(ctx, result.Task.ID)
+	if err != nil {
+		t.Fatalf("approving from the board: %v", err)
+	}
+	if approved.Status != domain.TaskDone {
+		t.Errorf("expected the planning job to complete, got %s", approved.Status)
+	}
+	all, err := svc.Tasks.List(ctx, repository.TaskFilter{ProjectID: project.Project.ID})
+	if err != nil {
+		t.Fatalf("listing tasks: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected the planning record plus one generated task, got %d", len(all))
+	}
+}

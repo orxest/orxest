@@ -193,8 +193,8 @@ asks for the plan JSON as the only result and also for a copy at
 return structured output). Approving
 it (`POST /api/tasks/{id}/approve`) creates the tasks, dependencies and optional
 containers; rejecting it (`POST /api/tasks/{id}/reject`) asks the architect
-again. A project can opt into `settings.auto_accept_plans` to persist validated
-plans without review. The architect is never a mandatory step of the per-task
+again. A project can opt into `settings.auto_accept_plans` — the *plan approval*
+control in its header — to persist validated plans without review. The architect is never a mandatory step of the per-task
 workflow.
 
 ## Licence

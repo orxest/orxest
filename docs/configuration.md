@@ -360,7 +360,7 @@ edit it in the UI or through `PUT /api/projects/{id}/workflow`.
 | `keep_worktrees` | false | keep worktrees after a task finishes |
 | `require_clean_worktree` | true | refuse to delete a worktree with uncommitted changes |
 | `commit_agent_changes` | true | Orxest commits work an agent left uncommitted |
-| `auto_accept_plans` | false | persist a validated architect plan without a human review; when false the plan waits as a draft |
+| `auto_accept_plans` | false | persist a validated architect plan without a human review; when false the plan waits as a draft. Toggle it from the *plan approval* control in the project header, or with `PATCH /api/projects/{id}` |
 | `git_author_name`, `git_author_email` | `Orxest <orxest@localhost>` | identity for Orxest generated commits |
 
 ---

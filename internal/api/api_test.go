@@ -923,3 +923,56 @@ func TestProjectStatsIncludesExecutionUsage(t *testing.T) {
 		t.Errorf("expected the task counter to be unaffected by usage metrics, got %d", after.Tasks)
 	}
 }
+
+// TestPlanApprovalSettingIsEditableOverTheAPI covers the operator path for the
+// plan-approval setting: it is off by default, a PATCH enables it, and the change
+// is reflected in the project the board reads.
+func TestPlanApprovalSettingIsEditableOverTheAPI(t *testing.T) {
+	env := newEnv(t, fake.New())
+	var bundle struct {
+		Project domain.Project `json:"project"`
+	}
+	env.expect("POST", "/api/projects", map[string]any{
+		"name":              "Plan approval setting",
+		"repository_path":   env.repo,
+		"target_branch":     "main",
+		"workflow_template": "minimal",
+		"agents":            []map[string]any{{"name": "dev", "harness": "fake", "role": "developer"}},
+	}, http.StatusCreated, &bundle)
+	if bundle.Project.Settings.AutoAcceptPlans {
+		t.Fatalf("plan auto-accept must be off by default")
+	}
+
+	// The UI sends the whole settings object, exactly as the badge does.
+	settings := bundle.Project.Settings
+	settings.AutoAcceptPlans = true
+	settings.MaxConcurrentExecutions = 3
+	var updated domain.Project
+	env.expect("PATCH", "/api/projects/"+bundle.Project.ID, map[string]any{
+		"settings": settings,
+	}, http.StatusOK, &updated)
+	if !updated.Settings.AutoAcceptPlans {
+		t.Fatalf("expected the setting to be enabled, got %+v", updated.Settings)
+	}
+	if updated.Settings.MaxConcurrentExecutions != 3 {
+		t.Errorf("the rest of the settings must be preserved: %+v", updated.Settings)
+	}
+
+	// The board carries the project, so the badge reflects the new value.
+	board := decode[struct {
+		Project domain.Project `json:"project"`
+	}](t, env.do("GET", "/api/projects/"+bundle.Project.ID+"/board", nil))
+	if !board.Project.Settings.AutoAcceptPlans {
+		t.Errorf("the board must expose the updated setting, got %+v", board.Project.Settings)
+	}
+
+	// Turning it back off works the same way.
+	settings.AutoAcceptPlans = false
+	var reverted domain.Project
+	env.expect("PATCH", "/api/projects/"+bundle.Project.ID, map[string]any{
+		"settings": settings,
+	}, http.StatusOK, &reverted)
+	if reverted.Settings.AutoAcceptPlans {
+		t.Errorf("expected the setting to be disabled again, got %+v", reverted.Settings)
+	}
+}

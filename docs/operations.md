@@ -51,8 +51,9 @@ migrations and exits; `orxest serve` also migrates on startup.
    turn a feature request into a proposed task plan (one or more tasks, with
    optional dependencies and parent/child structure). The plan is a draft:
    review it, then approve (which persists the tasks) or reject (which asks the
-   architect again). Set `settings.auto_accept_plans` only if you want validated
-   plans to be persisted without that review.
+   architect again). The *plan approval* control in the project header switches
+   this checkpoint off (`settings.auto_accept_plans`), so validated plans are
+   persisted without a review. It is off by default.
 5. **Watch the board.** Ready tasks are picked up automatically; approve or
    reject at an approval gate, retry failures, reassign agents, move work between
    steps, or run *Integrate* on a task that is awaiting Git integration.

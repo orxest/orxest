@@ -8,6 +8,7 @@ import {
   Link2,
   Pause,
   Play,
+  Settings as SettingsIcon,
   Workflow as WorkflowIcon,
   type LucideIcon,
 } from 'lucide-react'
@@ -98,13 +99,6 @@ function SettingsBadges({ project }: { project: Project }) {
       variant: settings.commit_agent_changes ? 'info' : 'muted',
     },
     {
-      label: `plan approval ${settings.auto_accept_plans ? 'auto' : 'required'}`,
-      title: settings.auto_accept_plans
-        ? 'Validated architect plans are persisted without a human review'
-        : 'An architect plan waits for a human decision before any task is scheduled',
-      variant: settings.auto_accept_plans ? 'muted' : 'purple',
-    },
-    {
       label: `conflict resolutions ${settings.max_conflict_resolutions ?? 2}`,
       title:
         'How many times an agent is asked to merge the target branch and resolve a conflict before it escalates to a human',
@@ -114,11 +108,84 @@ function SettingsBadges({ project }: { project: Project }) {
 
   return (
     <>
+      <PlanApprovalBadge project={project} />
       {entries.map((entry) => (
         <Badge key={entry.label} variant={entry.variant} title={entry.title}>
           {entry.label}
         </Badge>
       ))}
+    </>
+  )
+}
+
+/**
+ * Project setting for architect plans, and the one an operator changes often
+ * enough to belong in the header.
+ *
+ * Off by default: a validated plan waits in review until a human approves or
+ * rejects it. Turning it on tells Orxest to persist a validated plan immediately
+ * and start its tasks without a human in between.
+ */
+function PlanApprovalBadge({ project }: { project: Project }) {
+  const actions = useProjectActions()
+  const [confirming, setConfirming] = React.useState(false)
+  const auto = project.settings.auto_accept_plans ?? false
+  const next = !auto
+
+  const apply = () => {
+    actions.update.mutate(
+      {
+        projectId: project.id,
+        input: { settings: { ...project.settings, auto_accept_plans: next } },
+      },
+      { onSuccess: () => setConfirming(false) },
+    )
+  }
+
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="xs"
+        className={cn(
+          'h-auto gap-1.5 py-0.5',
+          auto && 'border-amber-500/50 text-amber-700 dark:text-amber-400',
+        )}
+        onClick={() => setConfirming(true)}
+        title={
+          auto
+            ? 'Validated architect plans are persisted without a human review. Click to require approval again.'
+            : 'An architect plan waits for a human decision before any task is scheduled. Click to accept validated plans automatically.'
+        }
+      >
+        <SettingsIcon className="size-3" />
+        plan approval {auto ? 'auto' : 'required'}
+      </Button>
+
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={auto ? 'Require plan approval again?' : 'Accept architect plans automatically?'}
+        description={
+          auto ? (
+            <>
+              New architect plans wait in review until a human approves them. Plans that
+              were already accepted are unaffected.
+            </>
+          ) : (
+            <>
+              A validated architect plan is persisted as soon as the architect finishes, so
+              its tasks start without anyone reviewing the draft. Plan approval stops being
+              a checkpoint: a misread request becomes real work that has to be cancelled by
+              hand.
+            </>
+          )
+        }
+        confirmLabel={auto ? 'Require approval' : 'Accept plans automatically'}
+        destructive={!auto}
+        pending={actions.update.isPending}
+        onConfirm={apply}
+      />
     </>
   )
 }

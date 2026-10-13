@@ -846,3 +846,86 @@ func TestBoardPlanningJobIsActionableFromTheBoard(t *testing.T) {
 		t.Fatalf("expected the planning record plus one generated task, got %d", len(all))
 	}
 }
+
+// TestEnablingPlanAutoAcceptFromTheAPIStopsAskingForApproval covers the operator
+// workflow for plan approval: a fresh project requires a decision (the default),
+// the setting can be turned on over the API, and from then on a validated plan is
+// persisted without anyone approving it.
+func TestEnablingPlanAutoAcceptFromTheAPIStopsAskingForApproval(t *testing.T) {
+	ctx := context.Background()
+	repo := testsupport.Repository(t, "main")
+	plan := map[string]any{
+		"tasks": []any{map[string]any{
+			"ref": "t1", "title": "Straightforward change",
+			"description": "d", "acceptance_criteria": "ac",
+		}},
+	}
+	harness := fake.New(
+		fake.WithoutWork(),
+		fake.WithScript("decomposition", fake.Step{
+			Outcome: domain.OutcomeSuccess, Summary: "plan", Result: plan,
+		}),
+	)
+	svc := testsupport.Service(t, testsupport.Options{Harnesses: harnesses(harness)})
+	project, err := svc.Projects.Create(ctx, app.CreateProjectInput{
+		Name:             "Auto accept",
+		RepositoryPath:   repo,
+		TargetBranch:     "main",
+		WorkflowTemplate: "minimal",
+		Agents: []app.CreateProjectAgentInput{
+			{Name: "arch", Harness: "fake", Role: domain.RoleArchitect},
+			{Name: "dev", Harness: "fake", Role: domain.RoleDeveloper},
+		},
+	})
+	if err != nil {
+		t.Fatalf("creating project: %v", err)
+	}
+
+	// The default is to require approval: this is the behaviour the operator is
+	// turning off, so it must be asserted, not assumed.
+	auto := project.Project.Settings.AutoAcceptPlans
+	if auto {
+		t.Fatalf("plan auto-accept must be disabled by default")
+	}
+
+	// Turning the setting on goes through the same update path the UI uses.
+	enabled := project.Project.Settings
+	enabled.AutoAcceptPlans = true
+	updated, err := svc.Projects.Update(ctx, project.Project.ID, app.UpdateProjectInput{Settings: &enabled})
+	if err != nil {
+		t.Fatalf("enabling plan auto-accept: %v", err)
+	}
+	if !updated.Settings.AutoAcceptPlans {
+		t.Fatalf("the setting did not persist: %+v", updated.Settings)
+	}
+	reloaded, err := svc.Projects.Get(ctx, project.Project.ID)
+	if err != nil {
+		t.Fatalf("reloading the project: %v", err)
+	}
+	if !reloaded.Settings.AutoAcceptPlans {
+		t.Fatalf("the setting did not survive a reload: %+v", reloaded.Settings)
+	}
+
+	// Planning now runs to completion on its own: no review state, and the
+	// proposed task exists.
+	result, err := svc.Planner.Decompose(ctx, project.Project.ID, app.DecomposeInput{Request: "do it"})
+	if err != nil {
+		t.Fatalf("decompose: %v", err)
+	}
+	drive(t, svc, "the plan to be persisted without a decision", func() bool {
+		return loadTask(t, svc, result.Task.ID).Status == domain.TaskDone
+	})
+	tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{ProjectID: project.Project.ID})
+	if err != nil {
+		t.Fatalf("listing tasks: %v", err)
+	}
+	var generated int
+	for _, task := range tasks {
+		if task.IsExecutableWork() {
+			generated++
+		}
+	}
+	if generated != 1 {
+		t.Fatalf("expected the plan to create its task automatically, got %d", generated)
+	}
+}

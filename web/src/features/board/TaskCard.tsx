@@ -1,5 +1,6 @@
 import { useMutationState } from '@tanstack/react-query'
 import {
+  Clock,
   ExternalLink,
   GitBranch,
   Layers,
@@ -19,7 +20,7 @@ import { Card } from '@/components/ui/card'
 import { Hint } from '@/components/ui/tooltip'
 import { TaskActionsMenu } from '@/features/board/TaskActionsMenu'
 import { TASK_DRAG_MIME } from '@/features/board/taskDrag'
-import { roleLabel, truncate } from '@/lib/format'
+import { durationBetween, formatDateTime, formatDurationMs, roleLabel, truncate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { BoardResponse, Task } from '@/types'
 
@@ -69,6 +70,7 @@ function attemptsLabel(task: Task): string {
 export function TaskCard({
   task,
   board,
+  now,
   busy = false,
   dragging = false,
   onDragStart,
@@ -77,6 +79,8 @@ export function TaskCard({
 }: {
   task: Task
   board: BoardResponse
+  /** The board's shared clock, used for the live agent execution duration. */
+  now: number
   busy?: boolean
   /** True while this card is the one being dragged. */
   dragging?: boolean
@@ -118,6 +122,24 @@ export function TaskCard({
       board.agents.find((assignment) => assignment.role_id === roleId)?.role.name ?? roleLabel(roleId)
     )
   }, [board.agents, roleId])
+
+  // How long the agent worked on this task. `started_at` is the first time an
+  // execution ran the task and `completed_at` its final completion. Only a task
+  // that is actively executing keeps accruing time: one waiting for review, an
+  // agent or a human must not look like it has been running forever, so for a
+  // parked task the figure stops at its last state change. The board supplies
+  // the clock, so a running duration stays live without a timer per card.
+  const activelyRunning = task.status === 'queued' || task.status === 'running'
+  const ranFor = task.completed_at
+    ? durationBetween(task.started_at, task.completed_at)
+    : activelyRunning
+      ? durationBetween(task.started_at, null, now)
+      : durationBetween(task.started_at, task.updated_at)
+  const elapsedTitle = task.started_at
+    ? `Started ${formatDateTime(task.started_at)} · ${
+        activelyRunning ? 'still running' : task.completed_at ? 'finished' : 'not currently running'
+      }`
+    : 'No execution has started for this task'
 
   // The board response carries the full dependency map; resolve each edge to the
   // task it points at so the card can say what it is waiting for.
@@ -235,6 +257,18 @@ export function TaskCard({
         <span className="justify-self-end font-mono" title="Board order">
           #{task.order_index}
         </span>
+        {ranFor !== null ? (
+          <span
+            className="col-span-2 flex items-center gap-1 border-t border-border/60 pt-1"
+            title={elapsedTitle}
+          >
+            <Clock className="size-3 shrink-0" />
+            <span className="font-mono">{formatDurationMs(ranFor)}</span>
+            <span className="truncate">
+              {activelyRunning ? 'agent execution (running)' : 'agent execution'}
+            </span>
+          </span>
+        ) : null}
       </div>
 
       {roleId ? (

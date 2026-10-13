@@ -8,6 +8,7 @@ import { TaskCard, useBusyTaskIds } from '@/features/board/TaskCard'
 import { dropTargetStatus, needsDropConfirmation } from '@/features/board/taskDrag'
 import { statusAccent } from '@/features/board/statusColors'
 import { useTaskActions } from '@/hooks/mutations'
+import { useNow } from '@/hooks/useNow'
 import { taskStatusMeta } from '@/lib/status'
 import { cn } from '@/lib/utils'
 import type { BoardColumn, BoardResponse, Task, TaskStatus } from '@/types'
@@ -42,6 +43,10 @@ export function KanbanBoard({
   className?: string
 }) {
   const busyTaskIds = useBusyTaskIds()
+  // One clock for the whole board: the cards show how long an agent has been
+  // working, and a single 30s tick keeps every running duration honest without
+  // re-rendering the board every second.
+  const now = useNow(30_000)
   const contentRef = React.useRef<HTMLDivElement>(null)
   const railRef = React.useRef<HTMLDivElement>(null)
   const [railWidth, setRailWidth] = React.useState(0)
@@ -222,6 +227,7 @@ export function KanbanBoard({
                         key={task.id}
                         task={task}
                         board={board}
+                        now={now}
                         busy={busyTaskIds.has(task.id)}
                         dragging={dragTask?.id === task.id}
                         onDragStart={setDragTask}

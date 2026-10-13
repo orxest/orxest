@@ -3,10 +3,9 @@ import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { agentsApi } from '@/api/agents'
 import { unwrapItems } from '@/api/client'
 import { executionsApi } from '@/api/executions'
-import { issuesApi } from '@/api/issues'
 import { qk } from '@/api/keys'
 import { metaApi } from '@/api/meta'
-import { projectsApi } from '@/api/projects'
+import { projectsApi, type ProjectTaskListFilter } from '@/api/projects'
 import { tasksApi } from '@/api/tasks'
 import { workflowsApi } from '@/api/workflows'
 import type {
@@ -16,7 +15,6 @@ import type {
   ExecutionEvent,
   ExecutionLog,
   Health,
-  Issue,
   Meta,
   OrxestEvent,
   Project,
@@ -76,6 +74,37 @@ export function useBoard(projectId: string | undefined): UseQueryResult<BoardRes
   })
 }
 
+/**
+ * The user-visible tasks of a project: executable `work` tasks plus the
+ * `container` parents that group them. The board response carries the same
+ * data; this flat listing is used by the list view and by pickers that need
+ * every task of the project.
+ */
+export function useProjectTasks(
+  projectId: string | undefined,
+  filter: ProjectTaskListFilter = {},
+): UseQueryResult<Task[]> {
+  const planning = Boolean(filter.planning)
+  const all = filter.kind === 'all'
+  const queryKey = all
+    ? [...qk.projectTasks(projectId ?? ''), 'all']
+    : planning
+      ? [...qk.projectPlanningTasks(projectId ?? '')]
+      : [...qk.projectTasks(projectId ?? '')]
+  return useQuery({
+    queryKey,
+    queryFn: async () =>
+      unwrapItems(
+        await projectsApi.tasks(projectId as string, {
+          planning: planning || undefined,
+          kind: all ? 'all' : undefined,
+        }),
+      ),
+    enabled: Boolean(projectId),
+    ...LIVE,
+  })
+}
+
 export function useProjectEvents(
   projectId: string | undefined,
   limit = 50,
@@ -83,17 +112,6 @@ export function useProjectEvents(
   return useQuery({
     queryKey: qk.projectEvents(projectId ?? '', limit),
     queryFn: () => projectsApi.events(projectId as string, limit, 0),
-    enabled: Boolean(projectId),
-    ...LIVE,
-  })
-}
-
-export function useProjectIssues(
-  projectId: string | undefined,
-): UseQueryResult<{ items: Issue[]; total: number }> {
-  return useQuery({
-    queryKey: qk.projectIssues(projectId ?? ''),
-    queryFn: () => projectsApi.issues(projectId as string),
     enabled: Boolean(projectId),
     ...LIVE,
   })
@@ -187,24 +205,6 @@ export function useTaskExecutions(taskId: string | undefined): UseQueryResult<Ex
       return detail.executions ?? []
     },
     enabled: Boolean(taskId),
-  })
-}
-
-export function useIssue(issueId: string | undefined): UseQueryResult<Issue> {
-  return useQuery({
-    queryKey: qk.issue(issueId ?? ''),
-    queryFn: () => issuesApi.get(issueId as string),
-    enabled: Boolean(issueId),
-  })
-}
-
-export function useIssueTasks(
-  issueId: string | undefined,
-): UseQueryResult<{ items: Task[]; total: number }> {
-  return useQuery({
-    queryKey: qk.issueTasks(issueId ?? ''),
-    queryFn: () => issuesApi.tasks(issueId as string),
-    enabled: Boolean(issueId),
   })
 }
 

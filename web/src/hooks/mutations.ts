@@ -3,14 +3,12 @@ import * as React from 'react'
 
 import { agentsApi, type AgentInput, type AssignmentInput, type RoleInput } from '@/api/agents'
 import { errorMessage } from '@/api/client'
-import { issuesApi, type UpdateIssueInput } from '@/api/issues'
 import { qk } from '@/api/keys'
 import { metaApi } from '@/api/meta'
 import {
   projectsApi,
-  type CreateIssueInput,
-  type CreateIssueTaskInput,
   type CreateProjectInput,
+  type CreateTaskInput,
   type DecomposeInput,
   type ProjectBundle,
   type UpdateProjectInput,
@@ -21,7 +19,6 @@ import { useToast } from '@/hooks/useToast'
 import type {
   Agent,
   ArchitectPlan,
-  Issue,
   PauseResult,
   Project,
   RetryFailedResult,
@@ -38,12 +35,16 @@ export function useInvalidateTask() {
       void queryClient.invalidateQueries({ queryKey: qk.task(task.id) })
       void queryClient.invalidateQueries({ queryKey: qk.board(task.project_id) })
       void queryClient.invalidateQueries({ queryKey: qk.projectStats(task.project_id) })
+      void queryClient.invalidateQueries({ queryKey: qk.projectTasks(task.project_id) })
+      void queryClient.invalidateQueries({ queryKey: qk.projectPlanningTasks(task.project_id) })
       void queryClient.invalidateQueries({ queryKey: ['projects', task.project_id, 'events'] })
       void queryClient.invalidateQueries({ queryKey: qk.executions })
-      if (task.issue_id) {
-        void queryClient.invalidateQueries({ queryKey: qk.issueTasks(task.issue_id) })
+      // A parent/child or dependency change is visible from the related tasks
+      // too: their derived progress and edge lists move with this one.
+      if (task.parent_task_id) {
+        void queryClient.invalidateQueries({ queryKey: qk.taskDetail(task.parent_task_id) })
+        void queryClient.invalidateQueries({ queryKey: qk.task(task.parent_task_id) })
       }
-      void queryClient.invalidateQueries({ queryKey: qk.projectIssues(task.project_id) })
     },
     [queryClient],
   )
@@ -281,6 +282,26 @@ export function useDeleteTask() {
 }
 
 /**
+ * Creates a task directly in a project. Only a title is required: a task
+ * belongs to its project, so neither a parent nor a category is mandatory.
+ */
+export function useCreateTask(projectId: string) {
+  const queryClient = useQueryClient()
+  const toast = useToast()
+  return useMutation({
+    mutationFn: (input: CreateTaskInput) => projectsApi.createTask(projectId, input),
+    onSuccess: (task: Task) => {
+      void queryClient.invalidateQueries({ queryKey: qk.projectTasks(projectId) })
+      void queryClient.invalidateQueries({ queryKey: qk.board(projectId) })
+      void queryClient.invalidateQueries({ queryKey: qk.projectStats(projectId) })
+      void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'events'] })
+      toast.success('Task created', task.title)
+    },
+    onError: (error) => toast.error('Could not create task', errorMessage(error)),
+  })
+}
+
+/**
  * Resets every failed task of a project: each one goes back to the ready queue
  * with a fresh attempt budget. The API reports which tasks were reset and which
  * ones could not be, so a partial outcome is still surfaced honestly.
@@ -293,7 +314,7 @@ export function useRetryFailedTasks(projectId: string) {
     onSuccess: (result: RetryFailedResult) => {
       void queryClient.invalidateQueries({ queryKey: qk.board(projectId) })
       void queryClient.invalidateQueries({ queryKey: qk.projectStats(projectId) })
-      void queryClient.invalidateQueries({ queryKey: qk.projectIssues(projectId) })
+      void queryClient.invalidateQueries({ queryKey: qk.projectTasks(projectId) })
       void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'events'] })
       void queryClient.invalidateQueries({ queryKey: qk.executions })
 
@@ -332,6 +353,7 @@ export function useProjectPause(projectId: string) {
     void queryClient.invalidateQueries({ queryKey: qk.projects })
     void queryClient.invalidateQueries({ queryKey: qk.board(projectId) })
     void queryClient.invalidateQueries({ queryKey: qk.projectStats(projectId) })
+    void queryClient.invalidateQueries({ queryKey: qk.projectTasks(projectId) })
     void queryClient.invalidateQueries({ queryKey: qk.executions })
     void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'events'] })
   }, [queryClient, projectId])
@@ -365,7 +387,8 @@ export function useProjectPause(projectId: string) {
   return { pause, resume }
 }
 
-export function useProjectActions() {  const queryClient = useQueryClient()
+export function useProjectActions() {
+  const queryClient = useQueryClient()
   const toast = useToast()
 
   const invalidateProject = React.useCallback(
@@ -373,6 +396,8 @@ export function useProjectActions() {  const queryClient = useQueryClient()
       void queryClient.invalidateQueries({ queryKey: qk.project(projectId) })
       void queryClient.invalidateQueries({ queryKey: qk.projectStats(projectId) })
       void queryClient.invalidateQueries({ queryKey: qk.board(projectId) })
+      void queryClient.invalidateQueries({ queryKey: qk.projectTasks(projectId) })
+      void queryClient.invalidateQueries({ queryKey: qk.projectPlanningTasks(projectId) })
       void queryClient.invalidateQueries({ queryKey: qk.projectAgents(projectId) })
       void queryClient.invalidateQueries({ queryKey: qk.projectWorkflow(projectId) })
       void queryClient.invalidateQueries({ queryKey: qk.projectStaffing(projectId) })
@@ -427,23 +452,27 @@ export function useProjectActions() {  const queryClient = useQueryClient()
     onError: (error) => toast.error('Repository check failed', errorMessage(error)),
   })
 
+  /**
+   * Plans work with the architect. In `architect` mode a planning task is
+   * queued and nothing is scheduled until its draft plan is approved; in
+   * `direct` mode a supplied plan is validated and persisted immediately.
+   */
   const decompose = useMutation({
     mutationFn: ({ projectId, input }: { projectId: string; input: DecomposeInput }) =>
       projectsApi.decompose(projectId, input),
-    onSuccess: (result) => {
-      invalidateProject(result.issue.project_id)
-      void queryClient.invalidateQueries({ queryKey: qk.issueTasks(result.issue.id) })
+    onSuccess: (result, variables) => {
+      invalidateProject(variables.projectId)
       void queryClient.invalidateQueries({ queryKey: qk.projects })
       if (result.mode === 'direct') {
-        toast.success(
-          'Plan persisted',
-          `${result.created_tasks?.length ?? 0} task(s) created`,
-        )
+        toast.success('Plan persisted', `${result.created_tasks?.length ?? 0} task(s) created`)
       } else {
-        toast.info('Architect task queued', 'The architect proposes a draft plan for this issue')
+        toast.info(
+          'Architect task queued',
+          'The architect proposes a draft plan; nothing is scheduled until it is approved.',
+        )
       }
     },
-    onError: (error) => toast.error('Decomposition failed', errorMessage(error)),
+    onError: (error) => toast.error('Planning failed', errorMessage(error)),
   })
 
   const importConfig = useMutation({
@@ -458,68 +487,6 @@ export function useProjectActions() {  const queryClient = useQueryClient()
   })
 
   return { create, update, remove, ensureRepository, decompose, importConfig, invalidateProject }
-}
-
-export function useIssueActions(projectId: string | undefined) {
-  const queryClient = useQueryClient()
-  const toast = useToast()
-
-  const invalidate = React.useCallback(
-    (issue?: Issue) => {
-      if (projectId) {
-        void queryClient.invalidateQueries({ queryKey: qk.board(projectId) })
-        void queryClient.invalidateQueries({ queryKey: qk.projectIssues(projectId) })
-        void queryClient.invalidateQueries({ queryKey: qk.projectStats(projectId) })
-        void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'events'] })
-      }
-      if (issue) void queryClient.invalidateQueries({ queryKey: qk.issue(issue.id) })
-    },
-    [projectId, queryClient],
-  )
-
-  const create = useMutation({
-    mutationFn: (input: CreateIssueInput) => projectsApi.createIssue(projectId as string, input),
-    onSuccess: (issue) => {
-      invalidate(issue)
-      toast.success('Issue created', issue.title)
-    },
-    onError: (error) => toast.error('Could not create issue', errorMessage(error)),
-  })
-
-  const update = useMutation({
-    mutationFn: ({ issueId, input }: { issueId: string; input: UpdateIssueInput }) =>
-      issuesApi.update(issueId, input),
-    onSuccess: (issue) => {
-      invalidate(issue)
-      toast.success('Issue updated')
-    },
-    onError: (error) => toast.error('Could not update issue', errorMessage(error)),
-  })
-
-  const remove = useMutation({
-    mutationFn: (issueId: string) => issuesApi.remove(issueId),
-    onSuccess: () => {
-      invalidate()
-      toast.info('Issue deleted')
-    },
-    onError: (error) => toast.error('Could not delete issue', errorMessage(error)),
-  })
-
-  const createTask = useMutation({
-    mutationFn: ({ issueId, input }: { issueId: string; input: CreateIssueTaskInput }) =>
-      issuesApi.createTask(issueId, input),
-    onSuccess: (task) => {
-      void queryClient.invalidateQueries({ queryKey: qk.issueTasks(task.issue_id) })
-      if (projectId) {
-        void queryClient.invalidateQueries({ queryKey: qk.board(projectId) })
-        void queryClient.invalidateQueries({ queryKey: qk.projectStats(projectId) })
-      }
-      toast.success('Task created', task.title)
-    },
-    onError: (error) => toast.error('Could not create task', errorMessage(error)),
-  })
-
-  return { create, update, remove, createTask }
 }
 
 export function useAgentActions() {

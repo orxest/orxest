@@ -33,15 +33,8 @@ func TestMoveTaskStopsTerminalWork(t *testing.T) {
 		},
 	}, http.StatusCreated, &bundle)
 
-	var issue domain.Issue
-	env.expect("POST", "/api/projects/"+bundle.Project.ID+"/issues", map[string]any{
-		"title":       "Move me",
-		"description": "Dragged between columns.",
-		"priority":    2,
-	}, http.StatusCreated, &issue)
-
 	var task domain.Task
-	env.expect("POST", "/api/issues/"+issue.ID+"/tasks", map[string]any{
+	env.expect("POST", "/api/projects/"+bundle.Project.ID+"/tasks", map[string]any{
 		"title":               "Long task",
 		"description":         "Runs until it is moved.",
 		"acceptance_criteria": "Moved by an operator",

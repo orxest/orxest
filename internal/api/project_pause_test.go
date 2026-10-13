@@ -44,17 +44,10 @@ func TestProjectPauseStopsAndHoldsWork(t *testing.T) {
 		t.Fatalf("a new project must not be paused: %+v", bundle.Project)
 	}
 
-	var issue domain.Issue
-	env.expect("POST", "/api/projects/"+projectID+"/issues", map[string]any{
-		"title":       "Two long tasks",
-		"description": "Held by the project pause.",
-		"priority":    2,
-	}, http.StatusCreated, &issue)
-
 	tasks := make([]domain.Task, 0, 2)
 	for _, title := range []string{"First long task", "Second long task"} {
 		var task domain.Task
-		env.expect("POST", "/api/issues/"+issue.ID+"/tasks", map[string]any{
+		env.expect("POST", "/api/projects/"+projectID+"/tasks", map[string]any{
 			"title":               title,
 			"description":         "Runs for longer than the test.",
 			"acceptance_criteria": "Never finishes before the pause",

@@ -13,7 +13,7 @@ type sample struct {
 	Task    domain.Task       `json:"task"`
 	Nested  []sample          `json:"nested"`
 	Values  map[string]any    `json:"values"`
-	Pointer *domain.Issue     `json:"pointer"`
+	Pointer *domain.Project   `json:"pointer"`
 }
 
 // TestNormalizedValueRemovesNulls documents the API contract: a collection is

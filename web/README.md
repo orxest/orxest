@@ -78,8 +78,7 @@ do not delete the file or the plugin.
 | `/` | Project list with per-project counters and a delete flow |
 | `/projects/new` | Create project (React Hook Form + Zod, dynamic agent configurations) |
 | `/projects/:projectId` | Project shell: header, stats, tabs, live SSE subscription |
-| `/projects/:projectId/board` | Kanban board, dependency graph / DAG edge list, running agents |
-| `/projects/:projectId/issues` | Issues, per-issue tasks, create issue, decompose with architect |
+| `/projects/:projectId/board` | Task board: work tasks and containers with derived progress, dependency graph, **Add task** and **Plan work with architect**, running agents |
 | `/projects/:projectId/activity` | Live activity feed and running agents |
 | `/projects/:projectId/agents` | Role assignments + project YAML import/export |
 | `/projects/:projectId/workflow` | Workflow step editor (`PUT /api/projects/{id}/workflow`) |
@@ -93,7 +92,7 @@ src/
   app/            router, providers, layout (header with health + scheduler status)
   api/            typed API client + one module per feature + query key factory
   components/     ui/ (primitives), common/ (badges, dialogs, json), layout/
-  features/       projects, board, issues, tasks, agents, workflows, executions, activity
+  features/       projects, board, tasks, agents, workflows, executions, activity
   hooks/          query + mutation hooks, SSE hooks, theme, clock
   lib/            cn(), formatting, status metadata, stream event names
   types/          hand written domain types mirroring internal/domain
@@ -101,6 +100,11 @@ src/
 
 ## Conventions
 
+- **There is one work-item entity: `Task`.** A task belongs directly to a project.
+  `kind` says how Orxest treats it: `work` is executable, `container` is a
+  structural parent that is never executed or moved (its progress is derived
+  from its children) and `decomposition` is an internal architect planning
+  record. Containers and planning records are never counted as project work.
 - **Server state lives in TanStack Query.** Components never call `fetch` directly;
   they use `src/api/*` through the hooks in `src/hooks/queries.ts` and mutate
   through `src/hooks/mutations.ts` (which toast and invalidate for you).

@@ -43,12 +43,14 @@ export function AddDependencyControl({
       ...dependencies.map((dependency) => dependency.task_id),
       ...dependents.map((dependent) => dependent.id),
     ])
-    const seen = new Set<string>()
     const list: Task[] = []
     for (const column of board.data?.columns ?? []) {
       for (const candidate of column.tasks ?? []) {
-        if (excluded.has(candidate.id) || seen.has(candidate.id)) continue
-        seen.add(candidate.id)
+        // A container is never executed, so it cannot be an execution
+        // prerequisite. Dependencies stay separate from the hierarchy.
+        if (candidate.kind !== 'work') continue
+        if (excluded.has(candidate.id)) continue
+        excluded.add(candidate.id)
         list.push(candidate)
       }
     }
@@ -126,7 +128,8 @@ export function AddDependencyControl({
       </div>
 
       <p className="text-[11px] text-muted-foreground">
-        The backend rejects cyclic edges with a 409{' '}
+        Dependencies are a separate relation from the parent/child hierarchy: only executable
+        work tasks can be prerequisites, and the backend rejects cyclic edges with a 409{' '}
         <code className="font-mono">dependency_cycle</code> error.
       </p>
       {selfDependency ? (

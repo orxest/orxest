@@ -96,16 +96,11 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/projects/{id}/decompose", s.handleDecompose)
 	m.HandleFunc("GET /api/projects/{id}/dependencies", s.handleDependencyGraph)
 
-	// Issues
-	m.HandleFunc("GET /api/projects/{id}/issues", s.handleListIssues)
-	m.HandleFunc("POST /api/projects/{id}/issues", s.handleCreateIssue)
+	// Project tasks. A task belongs directly to a project: there is no issue
+	// entity in the new contract.
 	m.HandleFunc("GET /api/projects/{id}/tasks", s.handleListProjectTasks)
+	m.HandleFunc("POST /api/projects/{id}/tasks", s.handleCreateProjectTask)
 	m.HandleFunc("POST /api/projects/{id}/tasks/retry-failed", s.handleRetryFailedProjectTasks)
-	m.HandleFunc("GET /api/issues/{id}", s.handleGetIssue)
-	m.HandleFunc("PATCH /api/issues/{id}", s.handleUpdateIssue)
-	m.HandleFunc("DELETE /api/issues/{id}", s.handleDeleteIssue)
-	m.HandleFunc("GET /api/issues/{id}/tasks", s.handleListIssueTasks)
-	m.HandleFunc("POST /api/issues/{id}/tasks", s.handleCreateIssueTask)
 
 	// Tasks
 	m.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)

@@ -48,7 +48,6 @@ function eventVariant(type: string): BadgeVariant {
   if (type.includes('fail') || type.includes('error')) return 'danger'
   if (type.startsWith('execution')) return 'default'
   if (type.startsWith('task')) return 'info'
-  if (type.startsWith('issue')) return 'info'
   if (type.startsWith('agent') || type.startsWith('workflow')) return 'purple'
   return 'muted'
 }
@@ -260,10 +259,9 @@ export function ActivityFeed({
 
                     <p className="text-xs leading-relaxed break-words">{event.message || '—'}</p>
 
-                    {event.task_id || event.issue_id || event.execution_id ? (
+                    {event.task_id || event.execution_id ? (
                       <div className="flex flex-wrap items-center gap-1">
                         {event.task_id ? <IdChip value={event.task_id} /> : null}
-                        {event.issue_id ? <IdChip value={event.issue_id} /> : null}
                         {event.execution_id ? <IdChip value={event.execution_id} /> : null}
                       </div>
                     ) : null}

@@ -2,8 +2,8 @@ import type { BadgeVariant } from '@/components/ui/badge'
 import type {
   ExecutionStatus,
   FailureKind,
-  IssueStatus,
   ReasoningLevel,
+  TaskKind,
   TaskStatus,
 } from '@/types'
 
@@ -50,18 +50,45 @@ export function taskStatusMeta(status: TaskStatus | string | undefined): StatusM
   return { label: status ? String(status) : 'Unknown', variant: 'outline' }
 }
 
-export const ISSUE_STATUS_META: Record<IssueStatus, StatusMeta> = {
-  open: { label: 'Open', variant: 'info' },
-  in_progress: { label: 'In progress', variant: 'default' },
-  done: { label: 'Done', variant: 'success' },
-  cancelled: { label: 'Cancelled', variant: 'muted' },
+/**
+ * How Orxest treats a task. `work` is the only executable kind; a `container`
+ * is a structural parent and a `decomposition` task is an internal architect
+ * planning record.
+ */
+export const TASK_KIND_META: Record<TaskKind, StatusMeta> = {
+  work: {
+    label: 'work',
+    variant: 'outline',
+    description: 'Ordinary executable work: dispatched to an agent',
+  },
+  container: {
+    label: 'container',
+    variant: 'purple',
+    description:
+      'Structural parent representing a broader outcome. Never executed; its progress comes from its children.',
+  },
+  decomposition: {
+    label: 'planning',
+    variant: 'info',
+    description: 'Internal architect planning record. Not a work item.',
+  },
 }
 
-export function issueStatusMeta(status: IssueStatus | string | undefined): StatusMeta {
-  if (status && status in ISSUE_STATUS_META) {
-    return ISSUE_STATUS_META[status as IssueStatus]
+export function taskKindMeta(kind: TaskKind | string | undefined): StatusMeta {
+  if (kind && kind in TASK_KIND_META) {
+    return TASK_KIND_META[kind as TaskKind]
   }
-  return { label: status ? String(status) : 'Unknown', variant: 'outline' }
+  return { label: kind ? String(kind) : 'unknown', variant: 'outline' }
+}
+
+/** True for a structural parent, which can never be moved or executed. */
+export function isContainerTask(kind: TaskKind | string | undefined): boolean {
+  return kind === 'container'
+}
+
+/** True for an internal architect planning record. */
+export function isPlanningTask(kind: TaskKind | string | undefined): boolean {
+  return kind === 'decomposition'
 }
 
 export const EXECUTION_STATUS_META: Record<ExecutionStatus, StatusMeta> = {
@@ -159,10 +186,31 @@ export const RESERVED_TRANSITIONS = [
 
 const TERMINAL_STATUSES: TaskStatus[] = ['done', 'cancelled']
 
-/** Action availability mirrors the backend rules; the server stays authoritative. */
+/**
+ * What a task kind may do, independent of its status.
+ *
+ * A `container` has no workflow state of its own and is never dispatched, so
+ * every execution action is unavailable for it: the backend answers 409. A
+ * `decomposition` task is an internal architect planning record: it is not
+ * board work, but the operator still approves or rejects its draft plan.
+ */
+export function taskKindCapabilities(kind: TaskKind | string | undefined): {
+  /** Whether the task participates in the board workflow at all. */
+  boardWork: boolean
+  canApprovePlan: boolean
+} {
+  if (kind === 'container') return { boardWork: false, canApprovePlan: false }
+  if (kind === 'decomposition') return { boardWork: false, canApprovePlan: true }
+  return { boardWork: true, canApprovePlan: false }
+}
+
+/**
+ * Action availability mirrors the backend rules; the server stays authoritative.
+ */
 export function taskActions(
   status: TaskStatus,
   failureKind?: string,
+  kind: TaskKind | string = 'work',
 ): {
   canStart: boolean
   canRetry: boolean
@@ -173,7 +221,24 @@ export function taskActions(
   canMove: boolean
   canIntegrate: boolean
   canResolveConflict: boolean
+  /** True for a non-executable task: a container or a planning record. */
+  nonExecutable: boolean
 } {
+  const capabilities = taskKindCapabilities(kind)
+  if (!capabilities.boardWork) {
+    return {
+      canStart: false,
+      canRetry: false,
+      canCancel: false,
+      canApprove: capabilities.canApprovePlan && status === 'review',
+      canReject: capabilities.canApprovePlan && status === 'review',
+      canReassign: false,
+      canMove: false,
+      canIntegrate: false,
+      canResolveConflict: false,
+      nonExecutable: true,
+    }
+  }
   const terminal = TERMINAL_STATUSES.includes(status)
   return {
     // Start is a no-op for already running/ready tasks and a conflict in review.
@@ -193,6 +258,7 @@ export function taskActions(
     // A blocked integration conflict can be handed to a coding agent instead of
     // being resolved by hand.
     canResolveConflict: status === 'blocked' && failureKind === 'integration_conflict',
+    nonExecutable: false,
   }
 }
 
@@ -214,8 +280,6 @@ export const EVENT_TYPE_ICON_COLORS: Record<string, BadgeVariant> = {
   'execution.output': 'muted',
   'execution.completed': 'success',
   'execution.failed': 'danger',
-  'issue.created': 'info',
-  'issue.updated': 'info',
   'project.created': 'success',
   'project.updated': 'info',
   'project.paused': 'warning',

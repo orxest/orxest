@@ -6,7 +6,6 @@ import {
   GitBranch,
   LayoutGrid,
   Link2,
-  ListTodo,
   Pause,
   Play,
   Workflow as WorkflowIcon,
@@ -36,8 +35,7 @@ import { cn } from '@/lib/utils'
 import type { Project } from '@/types'
 
 const TABS: Array<{ to: string; label: string; icon: LucideIcon }> = [
-  { to: 'board', label: 'Board', icon: LayoutGrid },
-  { to: 'issues', label: 'Issues', icon: ListTodo },
+  { to: 'tasks', label: 'Tasks & board', icon: LayoutGrid },
   { to: 'activity', label: 'Activity', icon: Activity },
   { to: 'agents', label: 'Agents', icon: Bot },
   { to: 'workflow', label: 'Workflow', icon: WorkflowIcon },

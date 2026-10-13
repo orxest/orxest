@@ -12,7 +12,6 @@ interface StreamPayload {
   project_id?: string
   task_id?: string
   execution_id?: string
-  issue_id?: string
   message?: string
   created_at?: string
 }
@@ -97,6 +96,12 @@ export function useProjectStream(
 
     schedule(qk.board(projectId))
     schedule(qk.projectStats(projectId))
+    // The task listing is a separate cache entry from the board, so a task
+    // create/update/progress event has to refresh it as well.
+    if (type.startsWith('task.') || type.startsWith('project.')) {
+      schedule(qk.projectTasks(projectId))
+      schedule(qk.projectPlanningTasks(projectId))
+    }
     schedule(['projects', projectId, 'events'])
 
     // Project level events carry the record itself: a pause or resume decided in
@@ -113,8 +118,7 @@ export function useProjectStream(
     if (payload.execution_id || type.startsWith('execution.')) {
       schedule(qk.executions)
     }
-    if (type.startsWith('issue.') || type === 'workflow.updated') {
-      schedule(qk.projectIssues(projectId))
+    if (type === 'workflow.updated') {
       schedule(qk.projectWorkflow(projectId))
     }
     if (type.startsWith('agent.') || type === 'workflow.updated') {

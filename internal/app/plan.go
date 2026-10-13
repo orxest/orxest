@@ -31,34 +31,35 @@ const (
 )
 
 // Planner owns architect-driven decomposition (spec §16, §44): turning a
-// high-level request into a validated issue, tasks and dependencies.
+// high-level request into a validated set of tasks, dependencies, optional
+// hierarchy and acceptance criteria.
 //
 // Nothing is created from free-form Markdown: the architect returns structured
-// data, Orxest validates it, and only then does it become project state.
+// data, Orxest validates it, and only then does it become project state. No
+// user-visible issue or root entity is ever created.
 type Planner struct {
 	deps      Deps
 	tasks     *TaskService
-	issues    *IssueService
 	workflows *WorkflowService
 }
 
 // NewPlanner creates the planner.
-func NewPlanner(deps Deps, tasks *TaskService, issues *IssueService, workflows *WorkflowService) *Planner {
-	return &Planner{deps: deps, tasks: tasks, issues: issues, workflows: workflows}
+func NewPlanner(deps Deps, tasks *TaskService, workflows *WorkflowService) *Planner {
+	return &Planner{deps: deps, tasks: tasks, workflows: workflows}
 }
 
 // PlanningWorkflowName is the workflow used for decomposition tasks.
 const PlanningWorkflowName = "planning"
 
-// DecomposeInput is a decomposition request.
+// DecomposeInput is a decomposition request. It is project scoped: the request
+// text is the planning context, and it is preserved on the internal planning
+// record rather than on a separate user-visible entity.
 type DecomposeInput struct {
 	// Request is the high-level description of the work.
 	Request string `json:"request"`
-	// Title optionally overrides the issue title.
+	// Title optionally overrides the planning record's title.
 	Title string `json:"title"`
-	// IssueID extends an existing issue instead of creating a new one.
-	IssueID string `json:"issue_id"`
-	// Priority is the issue priority.
+	// Priority is the priority of the produced tasks.
 	Priority int `json:"priority"`
 	// Plan, when set, is persisted directly and no agent runs. This keeps
 	// manual task creation first class (spec §44).
@@ -69,15 +70,16 @@ type DecomposeInput struct {
 	MaxAttempts int `json:"max_attempts"`
 }
 
-// DecomposeResult describes what happened.
+// DecomposeResult describes what happened. Mode is "architect" when an agent
+// will produce the plan, or "direct" when the supplied plan was persisted
+// immediately.
 type DecomposeResult struct {
-	Issue    domain.Issue     `json:"issue"`
+	// Task is the internal planning record. It is not a user-facing work item.
 	Task     *domain.Task     `json:"decomposition_task,omitempty"`
 	Tasks    []domain.Task    `json:"created_tasks,omitempty"`
 	Workflow *domain.Workflow `json:"workflow,omitempty"`
-	// Mode is "architect" when an agent will produce the plan, or "direct" when
-	// the supplied plan was persisted immediately.
-	Mode string `json:"mode"`
+	Mode     string           `json:"mode"`
+	Notes    string           `json:"notes,omitempty"`
 }
 
 // Decompose starts (or performs) architect-driven decomposition for a project.
@@ -89,49 +91,13 @@ func (p *Planner) Decompose(ctx context.Context, projectID string, in DecomposeI
 	if strings.TrimSpace(in.Request) == "" && in.Plan == nil {
 		return nil, domain.Invalidf("request", "must not be empty")
 	}
-	if in.Request == "" && in.Plan != nil {
-		in.Request = in.Plan.Issue.Title
-	}
 
-	// Resolve or create the issue.
-	var issue *domain.Issue
-	if in.IssueID != "" {
-		issue, err = p.deps.Store.Issues().Get(ctx, in.IssueID)
-		if err != nil {
-			return nil, err
-		}
-		if issue.ProjectID != project.ID {
-			return nil, domain.Invalidf("issue_id", "issue belongs to another project")
-		}
-		issue.Source = domain.SourceArchitect
-		if issue.Description == "" {
-			issue.Description = in.Request
-		}
-		issue.UpdatedAt = p.deps.now()
-		if err := p.deps.Store.Issues().Update(ctx, issue); err != nil {
-			return nil, err
-		}
-	} else {
-		title := strings.TrimSpace(in.Title)
-		if title == "" {
-			title = firstLine(in.Request)
-		}
-		issue, err = p.issues.Create(ctx, project.ID, CreateIssueInput{
-			Title:       title,
-			Description: in.Request,
-			Priority:    in.Priority,
-		})
-		if err != nil {
-			return nil, err
-		}
-		if err := p.markIssueArchitectSourced(ctx, issue); err != nil {
-			return nil, err
-		}
-	}
-
-	// Direct persistence path.
+	// Direct persistence path: the caller supplied a plan, so no agent runs.
 	if in.Plan != nil {
-		created, err := p.persistPlan(ctx, project, issue, in.Plan)
+		if strings.TrimSpace(in.Request) == "" {
+			in.Request = planIntent(*in.Plan)
+		}
+		created, err := p.persistPlan(ctx, project, in.Plan, in.Priority)
 		if err != nil {
 			return nil, err
 		}
@@ -141,34 +107,47 @@ func (p *Planner) Decompose(ctx context.Context, projectID string, in DecomposeI
 				tasks = append(tasks, *t)
 			}
 		}
-		return &DecomposeResult{Issue: *issue, Tasks: tasks, Mode: "direct"}, nil
+		return &DecomposeResult{Tasks: tasks, Mode: "direct", Notes: in.Plan.Notes}, nil
 	}
 
-	// Agent path: create a decomposition task pinned to the planning workflow.
+	// Agent path: create an internal decomposition task pinned to the planning
+	// workflow. It belongs directly to the project and needs no parent.
 	workflow, err := p.ensurePlanningWorkflow(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	task, err := p.tasks.Create(ctx, issue.ID, CreateTaskInput{
-		Title:              "Decompose: " + firstLine(in.Request),
+	title := strings.TrimSpace(in.Title)
+	if title == "" {
+		title = "Plan: " + firstLine(in.Request)
+	}
+	task, err := p.tasks.Create(ctx, project.ID, CreateTaskInput{
+		Title:              title,
 		Description:        in.Request,
 		Priority:           in.Priority,
 		Kind:               domain.TaskKindDecomposition,
+		Source:             domain.SourceArchitect,
 		WorkflowID:         workflow.ID,
 		MaxAttempts:        in.MaxAttempts,
 		AgentID:            in.AgentID,
-		AcceptanceCriteria: "A validated plan containing an issue definition and one or more tasks with acceptance criteria and dependencies.",
+		AcceptanceCriteria: "A validated plan containing one or more tasks with acceptance criteria, optional dependencies and optional parent/child structure.",
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &DecomposeResult{Issue: *issue, Task: task, Workflow: workflow, Mode: "architect"}, nil
+	return &DecomposeResult{Task: task, Workflow: workflow, Mode: "architect"}, nil
 }
 
-func (p *Planner) markIssueArchitectSourced(ctx context.Context, issue *domain.Issue) error {
-	issue.Source = domain.SourceArchitect
-	issue.UpdatedAt = p.deps.now()
-	return p.deps.Store.Issues().Update(ctx, issue)
+// planIntent recovers a human-readable intent from a supplied plan so the
+// planning record and the events still describe what was asked for.
+func planIntent(plan domain.ArchitectPlan) string {
+	if strings.TrimSpace(plan.Notes) != "" {
+		return plan.Notes
+	}
+	titles := make([]string, 0, len(plan.Tasks))
+	for _, t := range plan.Tasks {
+		titles = append(titles, t.Title)
+	}
+	return strings.Join(titles, "; ")
 }
 
 // ensurePlanningWorkflow returns the single-step architect workflow of a
@@ -196,7 +175,7 @@ func (p *Planner) ensurePlanningWorkflow(ctx context.Context, project *domain.Pr
 		ID:          domain.NewID(domain.IDPrefixWorkflow),
 		ProjectID:   project.ID,
 		Name:        PlanningWorkflowName,
-		Description: "Single architect step used to decompose a request into issues and tasks.",
+		Description: "Single architect step used to decompose a request into tasks.",
 		IsDefault:   false,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -262,7 +241,7 @@ func planFromObject(raw map[string]any) (*domain.ArchitectPlan, error) {
 	if firstErr != nil {
 		return nil, firstErr
 	}
-	return nil, errors.New("the architect output has no issue/tasks shape")
+	return nil, errors.New("the architect output has no tasks shape")
 }
 
 func decodePlan(data []byte) (*domain.ArchitectPlan, error) {
@@ -393,7 +372,7 @@ func (p *Planner) DraftPlan(ctx context.Context, task *domain.Task) (*domain.Arc
 }
 
 // PersistPlan writes a validated plan as project state and returns the created
-// task ids in creation order.
+// task ids in creation order. It is how an approved draft becomes work.
 func (p *Planner) PersistPlan(ctx context.Context, decompositionTask *domain.Task, plan *domain.ArchitectPlan, exec *domain.Execution) ([]string, error) {
 	task, err := p.deps.Store.Tasks().Get(ctx, decompositionTask.ID)
 	if err != nil {
@@ -403,14 +382,13 @@ func (p *Planner) PersistPlan(ctx context.Context, decompositionTask *domain.Tas
 	if err != nil {
 		return nil, err
 	}
-	issue, err := p.deps.Store.Issues().Get(ctx, task.IssueID)
-	if err != nil {
-		return nil, err
-	}
-	return p.persistPlan(ctx, project, issue, plan)
+	return p.persistPlan(ctx, project, plan, task.Priority)
 }
 
-func (p *Planner) persistPlan(ctx context.Context, project *domain.Project, issue *domain.Issue, plan *domain.ArchitectPlan) ([]string, error) {
+// persistPlan applies a validated plan atomically. Nothing is written until the
+// whole plan has been validated, so an invalid plan can never leave partial
+// tasks behind.
+func (p *Planner) persistPlan(ctx context.Context, project *domain.Project, plan *domain.ArchitectPlan, priority int) ([]string, error) {
 	if err := domain.ValidateArchitectPlan(plan); err != nil {
 		return nil, err
 	}
@@ -420,69 +398,99 @@ func (p *Planner) persistPlan(ctx context.Context, project *domain.Project, issu
 	}
 
 	now := p.deps.now()
-	// The architect refines the issue it was asked about.
-	if strings.TrimSpace(plan.Issue.Title) != "" {
-		issue.Title = strings.TrimSpace(plan.Issue.Title)
-	}
-	if strings.TrimSpace(plan.Issue.Description) != "" {
-		issue.Description = plan.Issue.Description
-	}
-	if strings.TrimSpace(plan.Issue.AcceptanceCriteria) != "" {
-		issue.AcceptanceCriteria = plan.Issue.AcceptanceCriteria
-	}
-	if plan.Issue.Priority > 0 {
-		issue.Priority = plan.Issue.Priority
-	}
-	if len(plan.Issue.Labels) > 0 {
-		issue.Labels = plan.Issue.Labels
-	}
-	issue.Source = domain.SourceArchitect
-	issue.UpdatedAt = now
-	if err := issue.Validate(); err != nil {
-		return nil, err
-	}
-
 	created := make([]string, 0, len(plan.Tasks))
 	refToID := make(map[string]string, len(plan.Tasks))
-	baseOrder, err := p.deps.Store.Tasks().NextOrderIndex(ctx, issue.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	err = p.deps.Store.WithTx(ctx, func(ctx context.Context, tx repository.Store) error {
-		if err := tx.Issues().Update(ctx, issue); err != nil {
-			return err
+	// A planned task that is the parent_ref of another task becomes a structural
+	// container. The architect never has to set an internal implementation kind.
+	isParent := make(map[string]bool, len(plan.Tasks))
+	for i := range plan.Tasks {
+		if plan.Tasks[i].ParentRef != "" {
+			isParent[plan.Tasks[i].ParentRef] = true
 		}
-		for i, at := range plan.Tasks {
-			order := baseOrder + i
-			if at.OrderIndex > 0 {
-				order = baseOrder + at.OrderIndex
+	}
+	err = p.deps.Store.WithTx(ctx, func(ctx context.Context, tx repository.Store) error {
+		// Ordering slots are allocated per parent scope, so the root list and
+		// each container's child list are numbered independently.
+		nextOrder := map[string]int{}
+		slotNext := func(parentID string) (int, error) {
+			if n, ok := nextOrder[parentID]; ok {
+				nextOrder[parentID] = n + 1
+				return n, nil
 			}
-			task := &domain.Task{
-				ID:                 domain.NewID(domain.IDPrefixTask),
-				ProjectID:          project.ID,
-				IssueID:            issue.ID,
-				Title:              strings.TrimSpace(at.Title),
-				Description:        at.Description,
-				Priority:           at.Priority,
-				Status:             domain.TaskBacklog,
-				AcceptanceCriteria: at.AcceptanceCriteria,
-				Labels:             at.Labels,
-				Kind:               domain.TaskKindWork,
-				WorkflowID:         workflow.ID,
-				MaxAttempts:        project.Settings.DefaultMaxAttempts,
-				OrderIndex:         order,
-				CreatedAt:          now,
-				UpdatedAt:          now,
+			n, err := tx.Tasks().NextOrderIndex(ctx, project.ID, parentID)
+			if err != nil {
+				return 0, err
 			}
-			if err := task.Validate(); err != nil {
-				return err
+			nextOrder[parentID] = n + 1
+			return n, nil
+		}
+		// Creation order must resolve parent ids, so a task is created after the
+		// container it names. Parent references are acyclic, so this terminates.
+		remaining := make([]domain.ArchitectTask, len(plan.Tasks))
+		copy(remaining, plan.Tasks)
+		for len(remaining) > 0 {
+			progressed := false
+			rest := remaining[:0:0]
+			for _, at := range remaining {
+				parentID := ""
+				if at.ParentRef != "" {
+					id, ok := refToID[at.ParentRef]
+					if !ok {
+						rest = append(rest, at)
+						continue
+					}
+					parentID = id
+				}
+				kind := domain.TaskKindWork
+				if isParent[at.Ref] {
+					kind = domain.TaskKindContainer
+				}
+				order, err := slotNext(parentID)
+				if err != nil {
+					return err
+				}
+				// Containers render before their children in their own scope.
+				if isParent[at.Ref] {
+					order = 0
+				}
+				maxAttempts := project.Settings.DefaultMaxAttempts
+				if kind == domain.TaskKindContainer {
+					// Containers are never executed, so they carry no retry
+					// budget of their own.
+					maxAttempts = 0
+				}
+				task := &domain.Task{
+					ID:                 domain.NewID(domain.IDPrefixTask),
+					ProjectID:          project.ID,
+					ParentTaskID:       parentID,
+					Title:              strings.TrimSpace(at.Title),
+					Description:        at.Description,
+					Priority:           taskPriority(at.Priority, priority),
+					Status:             domain.TaskBacklog,
+					AcceptanceCriteria: at.AcceptanceCriteria,
+					Labels:             at.Labels,
+					Kind:               kind,
+					Source:             domain.SourceArchitect,
+					WorkflowID:         workflow.ID,
+					MaxAttempts:        maxAttempts,
+					OrderIndex:         order,
+					CreatedAt:          now,
+					UpdatedAt:          now,
+				}
+				if err := task.Validate(); err != nil {
+					return err
+				}
+				if err := tx.Tasks().Create(ctx, task); err != nil {
+					return err
+				}
+				refToID[at.Ref] = task.ID
+				created = append(created, task.ID)
+				progressed = true
 			}
-			if err := tx.Tasks().Create(ctx, task); err != nil {
-				return err
+			if !progressed {
+				return domain.Invalidf("parent_ref", "the plan's parent references cannot be resolved")
 			}
-			refToID[at.Ref] = task.ID
-			created = append(created, task.ID)
+			remaining = rest
 		}
 		for _, at := range plan.Tasks {
 			for _, depRef := range at.DependsOn {
@@ -502,15 +510,22 @@ func (p *Planner) persistPlan(ctx context.Context, project *domain.Project, issu
 	}
 	p.deps.publish(ctx, domain.Event{
 		ProjectID: project.ID,
-		IssueID:   issue.ID,
-		Type:      domain.EventIssueUpdated,
+		Type:      domain.EventTaskCreated,
 		Message:   fmt.Sprintf("architect plan persisted: %d task(s)", len(created)),
-		Payload:   map[string]any{"created_task_ids": created, "issue_title": issue.Title},
+		Payload:   map[string]any{"created_task_ids": created, "notes": plan.Notes},
 		CreatedAt: p.deps.now(),
 	})
 	p.deps.logger().InfoContext(ctx, "architect plan persisted",
 		slog.String("project_id", project.ID),
-		slog.String("issue_id", issue.ID),
 		slog.Int("tasks", len(created)))
 	return created, nil
+}
+
+// taskPriority combines the plan-level default with a task's own priority. A
+// task that states no priority inherits the request's.
+func taskPriority(taskPriority, fallback int) int {
+	if taskPriority > 0 {
+		return taskPriority
+	}
+	return fallback
 }

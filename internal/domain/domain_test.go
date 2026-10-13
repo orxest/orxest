@@ -147,7 +147,6 @@ func TestBuiltInTemplatesAreValid(t *testing.T) {
 
 func TestArchitectPlanValidation(t *testing.T) {
 	valid := domain.ArchitectPlan{
-		Issue: domain.ArchitectIssue{Title: "OAuth", Description: "Add OAuth"},
 		Tasks: []domain.ArchitectTask{
 			{Ref: "t1", Title: "Design", Description: "d", AcceptanceCriteria: "ac"},
 			{Ref: "t2", Title: "Implement", Description: "d", AcceptanceCriteria: "ac", DependsOn: []string{"t1"}},
@@ -183,7 +182,6 @@ func TestArchitectPlanValidation(t *testing.T) {
 	// Agents frequently label plan tasks `id` or `key`; that is normalised to
 	// `ref` instead of failing the whole plan over naming.
 	aliased := domain.ArchitectPlan{
-		Issue: domain.ArchitectIssue{Title: "Aliased", Description: "d"},
 		Tasks: []domain.ArchitectTask{
 			{ID: "TASK-001", Title: "first", Description: "d", AcceptanceCriteria: "ac"},
 			{Key: "TASK-002", Title: "second", Description: "d", AcceptanceCriteria: "ac", DependsOn: []string{"TASK-001"}},
@@ -247,5 +245,156 @@ func TestNewIDIsUniqueAndSortable(t *testing.T) {
 			t.Fatalf("ids are not time sortable: %q < %q", id, previous)
 		}
 		previous = id
+	}
+}
+
+// TestTaskNeedsNoIssueOrCategory is the core of the task-centric model: a task
+// is validated by its project and its own details alone. No issue, no parent and
+// no category label are required, and a label never gates validation.
+func TestTaskNeedsNoIssueOrCategory(t *testing.T) {
+	plain := domain.Task{ProjectID: "prj_1", Title: "Add a health endpoint"}
+	if err := plain.Validate(); err != nil {
+		t.Fatalf("a task with only a project and a title must validate: %v", err)
+	}
+	if plain.Kind != domain.TaskKindWork || plain.Source != domain.SourceManual || plain.Status != domain.TaskBacklog {
+		t.Errorf("unexpected defaults: kind=%q source=%q status=%q", plain.Kind, plain.Source, plain.Status)
+	}
+
+	labelled := domain.Task{ProjectID: "prj_1", Title: "x", Labels: []string{domain.LabelBug}}
+	if err := labelled.Validate(); err != nil {
+		t.Errorf("an optional label must never fail validation: %v", err)
+	}
+	unlabelled := domain.Task{ProjectID: "prj_1", Title: "x"}
+	if err := unlabelled.Validate(); err != nil {
+		t.Errorf("a task without a label must validate: %v", err)
+	}
+	if domain.TaskKindWork.Executable() != true {
+		t.Error("work must be executable")
+	}
+	if domain.TaskKindContainer.Executable() || domain.TaskKindDecomposition.Executable() {
+		t.Error("containers and decomposition tasks must never be executable")
+	}
+}
+
+func TestTaskKindAndParentValidation(t *testing.T) {
+	if err := (&domain.Task{ProjectID: "p", Title: "t", Kind: "nonsense"}).Validate(); err == nil {
+		t.Error("expected an unknown kind to be rejected")
+	}
+	if err := (&domain.Task{ID: "tsk_1", ProjectID: "p", Title: "t", ParentTaskID: "tsk_1"}).Validate(); err == nil {
+		t.Error("expected a self-parent to be rejected")
+	}
+	container := domain.Task{ID: "tsk_2", ProjectID: "p", Title: "goal", Kind: domain.TaskKindContainer}
+	if err := container.Validate(); err != nil {
+		t.Errorf("a container must not require executable acceptance criteria: %v", err)
+	}
+	if !container.IsContainer() || container.IsExecutableWork() {
+		t.Error("a container must not be executable work")
+	}
+}
+
+// TestArchitectPlanTaskCentricShape covers the single-task plan, optional
+// hierarchy and every rejection the plan requires before anything is persisted.
+func TestArchitectPlanTaskCentricShape(t *testing.T) {
+	single := domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Ref: "t1", Title: "One change", Description: "d", AcceptanceCriteria: "ac", Labels: []string{"documentation"}},
+	}}
+	if err := domain.ValidateArchitectPlan(&single); err != nil {
+		t.Fatalf("a single-task plan must validate: %v", err)
+	}
+
+	withHierarchy := domain.ArchitectPlan{Notes: "intent", Tasks: []domain.ArchitectTask{
+		{Ref: "goal", Title: "Ship OAuth", Description: "d"},
+		{Ref: "a", Title: "Design", Description: "d", AcceptanceCriteria: "ac", ParentRef: "goal"},
+		{Ref: "b", Title: "Implement", Description: "d", AcceptanceCriteria: "ac", ParentRef: "goal", DependsOn: []string{"a"}},
+	}}
+	if err := domain.ValidateArchitectPlan(&withHierarchy); err != nil {
+		t.Fatalf("a plan with optional hierarchy and dependencies must validate: %v", err)
+	}
+
+	reject := func(name string, plan domain.ArchitectPlan) {
+		t.Helper()
+		if err := domain.ValidateArchitectPlan(&plan); err == nil {
+			t.Errorf("%s: expected the plan to be rejected", name)
+		}
+	}
+	reject("no tasks", domain.ArchitectPlan{})
+	reject("missing acceptance criteria on a leaf", domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Ref: "t1", Title: "a", Description: "d"},
+	}})
+	reject("duplicate ref", domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Ref: "t1", Title: "a", Description: "d", AcceptanceCriteria: "ac"},
+		{Ref: "t1", Title: "b", Description: "d", AcceptanceCriteria: "ac"},
+	}})
+	reject("missing ref", domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Title: "a", Description: "d", AcceptanceCriteria: "ac"},
+	}})
+	reject("unknown dependency", domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Ref: "t1", Title: "a", Description: "d", AcceptanceCriteria: "ac", DependsOn: []string{"nope"}},
+	}})
+	reject("self dependency", domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Ref: "t1", Title: "a", Description: "d", AcceptanceCriteria: "ac", DependsOn: []string{"t1"}},
+	}})
+	reject("dependency cycle", domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Ref: "a", Title: "a", Description: "d", AcceptanceCriteria: "ac", DependsOn: []string{"b"}},
+		{Ref: "b", Title: "b", Description: "d", AcceptanceCriteria: "ac", DependsOn: []string{"a"}},
+	}})
+	reject("unknown parent", domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Ref: "a", Title: "a", Description: "d", AcceptanceCriteria: "ac", ParentRef: "nope"},
+	}})
+	reject("self parent", domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Ref: "a", Title: "a", Description: "d", AcceptanceCriteria: "ac", ParentRef: "a"},
+	}})
+	reject("parent cycle", domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Ref: "a", Title: "a", Description: "d", ParentRef: "b"},
+		{Ref: "b", Title: "b", Description: "d", ParentRef: "a"},
+	}})
+	reject("invalid priority", domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Ref: "a", Title: "a", Description: "d", AcceptanceCriteria: "ac", Priority: 9},
+	}})
+	reject("container gated by its descendant", domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Ref: "goal", Title: "goal", Description: "d", DependsOn: []string{"child"}},
+		{Ref: "child", Title: "child", Description: "d", AcceptanceCriteria: "ac", ParentRef: "goal"},
+	}})
+	reject("descendant gated by its ancestor container", domain.ArchitectPlan{Tasks: []domain.ArchitectTask{
+		{Ref: "goal", Title: "goal", Description: "d"},
+		{Ref: "child", Title: "child", Description: "d", AcceptanceCriteria: "ac", ParentRef: "goal", DependsOn: []string{"goal"}},
+	}})
+}
+
+// TestArchitectPlanLegacyIssueIsFoldedIntoNotes keeps backward tolerance: an
+// older agent that still emits a root `issue` object must not create an entity,
+// but its prose is preserved as planning notes.
+func TestArchitectPlanLegacyIssueIsFoldedIntoNotes(t *testing.T) {
+	raw := map[string]any{
+		"issue": map[string]any{"title": "OAuth", "description": "Add OAuth login"},
+		"tasks": []any{map[string]any{
+			"ref": "t1", "title": "a", "description": "d", "acceptance_criteria": "ac",
+		}},
+	}
+	domain.NormalizeArchitectPlanObject(raw)
+	if _, ok := raw["issue"]; ok {
+		t.Error("the legacy issue object must not survive normalisation")
+	}
+	notes, _ := raw["notes"].(string)
+	if notes == "" {
+		t.Error("the legacy issue prose must be preserved as notes")
+	}
+}
+
+func TestDescendantProgress(t *testing.T) {
+	if p := domain.DeriveProgress(0, 0, 0, 0); p.Status != domain.TaskBacklog {
+		t.Errorf("an empty container must not claim completion, got %s", p.Status)
+	}
+	if p := domain.DeriveProgress(3, 3, 0, 0); p.Status != domain.TaskDone || p.Executable != 0 {
+		t.Errorf("unexpected all-done progress: %+v", p)
+	}
+	if p := domain.DeriveProgress(3, 1, 0, 0); p.Status != domain.TaskReady || p.Executable != 2 {
+		t.Errorf("unexpected partial progress: %+v", p)
+	}
+	if p := domain.DeriveProgress(3, 1, 1, 0); p.Status != domain.TaskReady {
+		t.Errorf("a failed leaf keeps the container active, got %s", p.Status)
+	}
+	if p := domain.DeriveProgress(2, 1, 1, 0); p.Status != domain.TaskFailed {
+		t.Errorf("expected a settled failure to surface, got %s", p.Status)
 	}
 }

@@ -1,15 +1,18 @@
-import { AlertTriangle, CheckCircle2, FileJson, Layers, Loader2, Sparkles } from 'lucide-react'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  FileJson,
+  Layers,
+  Loader2,
+  Sparkles,
+} from 'lucide-react'
 import * as React from 'react'
 import { Link } from 'react-router-dom'
 
 import { errorMessage } from '@/api/client'
 import type { DecomposeInput } from '@/api/projects'
 import { IdChip } from '@/components/common/IdChip'
-import {
-  IssueStatusBadge,
-  PriorityBadge,
-  TaskStatusBadge,
-} from '@/components/common/StatusBadge'
+import { PriorityBadge, TaskStatusBadge } from '@/components/common/StatusBadge'
 import { ErrorAlert } from '@/components/layout/ErrorState'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -32,20 +35,23 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { agentOptions } from '@/features/agents/agentOptions'
+import {
+  parseArchitectPlanText,
+  planDependencyEdges,
+  planHasHierarchy,
+} from '@/features/tasks/architectPlan'
+import { PlanDraftReview } from '@/features/tasks/PlanDraftReview'
+import { TaskField } from '@/features/tasks/TaskField'
 import { useProjectActions } from '@/hooks/mutations'
 import { useTaskDetail } from '@/hooks/queries'
 import { PRIORITY_OPTIONS } from '@/lib/status'
-import { agentOptions } from '@/features/agents/agentOptions'
-import { IssueField } from '@/features/issues/IssueField'
-import { PlanDraftReview } from '@/features/issues/PlanDraftReview'
-import {
-  DEFAULT_AGENT_VALUE,
-  parseArchitectPlanText,
-  planDependencyEdges,
-} from '@/features/issues/issueForm'
 import type { DecomposeResult, ProjectAgentView } from '@/types'
 
-type DecomposeMode = 'architect' | 'advanced'
+type PlanningMode = 'architect' | 'advanced'
+
+/** Radix `Select` forbids empty item values, so "default" needs a sentinel. */
+const DEFAULT_AGENT_VALUE = '__default_agent__'
 
 /** Shared request textarea: the wording drives the architect in both modes. */
 function RequestField({
@@ -60,25 +66,27 @@ function RequestField({
   hint: React.ReactNode
 }) {
   return (
-    <IssueField label="Request" htmlFor={id} hint={hint}>
+    <TaskField label="What should be built?" htmlFor={id} hint={hint}>
       <Textarea
         id={id}
         rows={4}
         value={value}
-        placeholder="Describe the outcome you want. The architect turns it into an issue with concrete tasks."
+        placeholder="Describe the outcome you want. The architect turns it into concrete, verifiable tasks."
         onChange={(event) => onChange(event.target.value)}
       />
-    </IssueField>
+    </TaskField>
   )
 }
 
 /**
- * Decomposes a request into an issue with tasks. "Architect" queues a planning
- * execution whose draft plan waits for human approval (unless the project
- * auto-accepts plans); "Advanced" persists a pasted, validated JSON plan
- * immediately.
+ * Plans work with the architect. "Architect" queues a planning task whose draft
+ * plan waits for human approval (unless the project auto-accepts plans);
+ * "Advanced" persists a pasted, validated JSON plan immediately.
+ *
+ * A plan may contain a single task or many, with optional hierarchy,
+ * dependencies, priorities, labels and acceptance criteria.
  */
-export function DecomposeDialog({
+export function PlanWorkDialog({
   projectId,
   agents,
   autoAcceptPlans = false,
@@ -94,7 +102,7 @@ export function DecomposeDialog({
 }) {
   const actions = useProjectActions()
 
-  const [mode, setMode] = React.useState<DecomposeMode>('architect')
+  const [mode, setMode] = React.useState<PlanningMode>('architect')
   const [request, setRequest] = React.useState('')
   const [title, setTitle] = React.useState('')
   const [priority, setPriority] = React.useState('1')
@@ -107,9 +115,8 @@ export function DecomposeDialog({
   // several items with the same value.
   const options = React.useMemo(() => agentOptions(agents), [agents])
 
-  // Poll the queued planning task so the draft plan appears on its own once
-  // the architect execution finishes and the task parks in `review`. Polling
-  // stops when the dialog is closed.
+  // Poll the queued planning task so the draft plan appears on its own once the
+  // architect execution finishes and the task parks in `review`.
   const planningDetail = useTaskDetail(open ? result?.decomposition_task?.id : undefined)
 
   React.useEffect(() => {
@@ -128,6 +135,10 @@ export function DecomposeDialog({
   const planParse = React.useMemo(() => parseArchitectPlanText(planText), [planText])
   const plan = planParse.status === 'valid' ? planParse.plan : null
   const edges = plan ? planDependencyEdges(plan) : []
+  const containers = React.useMemo(() => {
+    if (!plan) return 0
+    return new Set(plan.tasks.map((task) => task.parent_ref).filter(Boolean)).size
+  }, [plan])
 
   // The queued task object from the response goes stale immediately; prefer the
   // polled detail so the draft plan and status update on their own.
@@ -144,14 +155,14 @@ export function DecomposeDialog({
 
   const maxAttemptsValid = maxAttempts.trim() === '' || /^\d+$/.test(maxAttempts.trim())
   const requestValid = request.trim().length > 0
-  const planValid = planParse.status === 'valid'
   const canSubmit =
-    requestValid && maxAttemptsValid && (mode === 'architect' || planValid) && !actions.decompose.isPending
-
-  const targetProjectId = projectId
+    requestValid &&
+    maxAttemptsValid &&
+    (mode === 'architect' || planParse.status === 'valid') &&
+    !actions.decompose.isPending
 
   const submit = async () => {
-    if (!targetProjectId || !canSubmit) return
+    if (!projectId || !canSubmit) return
     setSubmitError(null)
 
     let input: DecomposeInput
@@ -166,7 +177,7 @@ export function DecomposeDialog({
     }
 
     try {
-      const response = await actions.decompose.mutateAsync({ projectId: targetProjectId, input })
+      const response = await actions.decompose.mutateAsync({ projectId, input })
       setResult(response)
     } catch (error) {
       setSubmitError(error)
@@ -174,7 +185,6 @@ export function DecomposeDialog({
   }
 
   const pending = actions.decompose.isPending
-
   const close = () => onOpenChange(false)
 
   return (
@@ -186,8 +196,9 @@ export function DecomposeDialog({
             Plan work with the architect
           </DialogTitle>
           <DialogDescription>
-            One request becomes an issue plus concrete, verifiable tasks. The architect proposes a
-            draft; the backend validates every plan before anything is persisted.
+            Describe the outcome. The architect proposes one or many tasks — with optional
+            hierarchy, dependencies and acceptance criteria — and the backend validates every plan
+            before anything is persisted.
           </DialogDescription>
         </DialogHeader>
 
@@ -202,23 +213,6 @@ export function DecomposeDialog({
                   ? 'A planning task is queued. The architect only proposes a draft; nothing is scheduled until the plan is approved.'
                   : 'The pasted plan was validated and persisted immediately; its tasks are schedulable now.'}
               </span>
-            </div>
-
-            <div className="flex flex-col gap-1.5 rounded-md border border-border p-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-xs font-medium">{result.issue.title}</span>
-                <IssueStatusBadge status={result.issue.status} />
-                <PriorityBadge priority={result.issue.priority} />
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <IdChip value={result.issue.id} />
-                <Link
-                  to={`/projects/${result.issue.project_id}/issues`}
-                  className="text-xs text-primary hover:underline"
-                >
-                  Open the Issues tab
-                </Link>
-              </div>
             </div>
 
             {result.created_tasks && result.created_tasks.length > 0 ? (
@@ -236,6 +230,7 @@ export function DecomposeDialog({
                       >
                         {task.title}
                       </Link>
+                      {task.kind === 'container' ? <Badge variant="purple">container</Badge> : null}
                       <IdChip value={task.id} />
                       <TaskStatusBadge status={task.status} />
                     </div>
@@ -248,10 +243,11 @@ export function DecomposeDialog({
               awaitingPlanReview && planDraft ? (
                 <PlanDraftReview task={planningTask} plan={planDraft} />
               ) : (
-                <div className="flex flex-col gap-2 rounded-md border border-border p-3">
+                <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/30 p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Planning task
+                    <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      <Sparkles className="size-3" />
+                      Internal planning activity
                     </span>
                     <TaskStatusBadge status={planningTask.status} />
                   </div>
@@ -273,7 +269,7 @@ export function DecomposeDialog({
                     <p className="flex items-start gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
                       <CheckCircle2 className="mt-px size-3 shrink-0" />
                       <span>
-                        The plan was persisted and this issue’s tasks are now on the board.
+                        The plan was persisted and its tasks are now in this project.
                       </span>
                     </p>
                   ) : planningTask.status === 'failed' ? (
@@ -299,12 +295,6 @@ export function DecomposeDialog({
               )
             ) : null}
 
-            {result.mode === 'direct' && result.workflow ? (
-              <div className="flex items-center gap-2">
-                <Badge variant="muted">workflow: {result.workflow.name}</Badge>
-              </div>
-            ) : null}
-
             <DialogFooter>
               <Button onClick={close}>Done</Button>
             </DialogFooter>
@@ -312,7 +302,7 @@ export function DecomposeDialog({
         ) : (
           <div className="flex flex-col gap-3">
             {submitError ? (
-              <ErrorAlert error={submitError} title="Decomposition failed" />
+              <ErrorAlert error={submitError} title="Planning failed" />
             ) : null}
 
             <Tabs
@@ -332,29 +322,29 @@ export function DecomposeDialog({
 
               <TabsContent value="architect" className="flex flex-col gap-3">
                 <RequestField
-                  id="decompose-request-architect"
+                  id="plan-request-architect"
                   value={request}
                   onChange={setRequest}
                   hint="The architect explores the repository, then writes the plan."
                 />
 
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <IssueField
-                    label="Issue title"
-                    htmlFor="decompose-title"
+                  <TaskField
+                    label="Planning title"
+                    htmlFor="plan-title"
                     hint="Optional; derived from the request."
                   >
                     <Input
-                      id="decompose-title"
+                      id="plan-title"
                       value={title}
                       placeholder="Optional title"
                       onChange={(event) => setTitle(event.target.value)}
                     />
-                  </IssueField>
+                  </TaskField>
 
-                  <IssueField label="Priority" htmlFor="decompose-priority">
+                  <TaskField label="Priority" htmlFor="plan-priority">
                     <Select value={priority} onValueChange={setPriority}>
-                      <SelectTrigger id="decompose-priority">
+                      <SelectTrigger id="plan-priority" aria-label="Priority">
                         <SelectValue placeholder="Select a priority" />
                       </SelectTrigger>
                       <SelectContent>
@@ -365,29 +355,31 @@ export function DecomposeDialog({
                         ))}
                       </SelectContent>
                     </Select>
-                  </IssueField>
+                  </TaskField>
 
-                  <IssueField
+                  <TaskField
                     label="Max attempts"
-                    htmlFor="decompose-attempts"
+                    htmlFor="plan-attempts"
                     error={
-                      maxAttemptsValid ? undefined : 'Enter a whole number of attempts, or leave it empty.'
+                      maxAttemptsValid
+                        ? undefined
+                        : 'Enter a whole number of attempts, or leave it empty.'
                     }
                     hint="Retry budget for the planning task."
                   >
                     <Input
-                      id="decompose-attempts"
+                      id="plan-attempts"
                       inputMode="numeric"
                       value={maxAttempts}
                       placeholder="Project default"
                       onChange={(event) => setMaxAttempts(event.target.value)}
                     />
-                  </IssueField>
+                  </TaskField>
                 </div>
 
-                <IssueField
+                <TaskField
                   label="Architect agent"
-                  htmlFor="decompose-agent"
+                  htmlFor="plan-agent"
                   hint={
                     agents.length === 0
                       ? 'No agents are assigned to this project yet; the architect role will be resolved from the workflow.'
@@ -395,7 +387,7 @@ export function DecomposeDialog({
                   }
                 >
                   <Select value={agentId} onValueChange={setAgentId}>
-                    <SelectTrigger id="decompose-agent">
+                    <SelectTrigger id="plan-agent" aria-label="Architect agent">
                       <SelectValue placeholder="Default (architect role)" />
                     </SelectTrigger>
                     <SelectContent>
@@ -408,32 +400,34 @@ export function DecomposeDialog({
                       ))}
                     </SelectContent>
                   </Select>
-                </IssueField>
+                </TaskField>
               </TabsContent>
 
               <TabsContent value="advanced" className="flex flex-col gap-3">
                 <RequestField
-                  id="decompose-request-advanced"
+                  id="plan-request-advanced"
                   value={request}
                   onChange={setRequest}
-                  hint="Stored as the issue description and required by the backend."
+                  hint="Stored as the planning context and required by the backend."
                 />
 
-                <IssueField
+                <TaskField
                   label="Plan (JSON)"
-                  htmlFor="decompose-plan"
-                  hint="Exact architect plan shape: { issue, tasks[], notes? }."
+                  htmlFor="plan-json"
+                  hint="Architect plan shape: { tasks: [...], notes? }. A root planning-intent object from an older plan is folded into the notes."
                 >
                   <Textarea
-                    id="decompose-plan"
+                    id="plan-json"
                     rows={10}
                     spellCheck={false}
                     value={planText}
-                    placeholder={'{\n  "issue": { "title": "…", "description": "…" },\n  "tasks": [\n    { "ref": "t1", "title": "…", "description": "…", "acceptance_criteria": "…" }\n  ]\n}'}
+                    placeholder={
+                      '{\n  "tasks": [\n    { "ref": "t1", "title": "…", "description": "…", "acceptance_criteria": "…" }\n  ],\n  "notes": "optional"\n}'
+                    }
                     className="font-mono text-[11px]"
                     onChange={(event) => setPlanText(event.target.value)}
                   />
-                </IssueField>
+                </TaskField>
 
                 {planParse.status === 'invalid' ? (
                   <Alert variant="destructive">
@@ -442,11 +436,11 @@ export function DecomposeDialog({
                       <AlertTitle>Invalid plan</AlertTitle>
                       <AlertDescription>
                         <p>{planParse.message}</p>
-                        {planParse.issues.length > 0 ? (
+                        {planParse.problems.length > 0 ? (
                           <ul className="mt-1 list-disc pl-4">
-                            {planParse.issues.slice(0, 8).map((issue, index) => (
-                              <li key={`${issue.path}-${index}`}>
-                                <span className="font-mono">{issue.path}</span>: {issue.message}
+                            {planParse.problems.slice(0, 8).map((problem, index) => (
+                              <li key={`${problem.path}-${index}`}>
+                                <span className="font-mono">{problem.path}</span>: {problem.message}
                               </li>
                             ))}
                           </ul>
@@ -460,19 +454,17 @@ export function DecomposeDialog({
                   <div className="flex flex-col gap-2 rounded-md border border-border p-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <Layers className="size-3.5 text-muted-foreground" />
-                      <span className="text-xs font-medium">{plan.issue.title}</span>
+                      <span className="text-xs font-medium">Plan preview</span>
                       <Badge variant="muted">{plan.tasks.length} task(s)</Badge>
-                      {plan.issue.priority !== undefined ? (
-                        <PriorityBadge priority={plan.issue.priority} />
-                      ) : null}
+                      {containers > 0 ? <Badge variant="purple">{containers} container(s)</Badge> : null}
+                      {planHasHierarchy(plan) ? <Badge variant="info">hierarchy</Badge> : null}
                     </div>
-                    {plan.issue.labels && plan.issue.labels.length > 0 ? (
-                      <div className="flex flex-wrap gap-1">
-                        {plan.issue.labels.map((label) => (
-                          <Badge key={label} variant="outline">
-                            {label}
-                          </Badge>
-                        ))}
+                    {plan.tasks[0]?.priority !== undefined ? (
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          Top priority
+                        </span>
+                        <PriorityBadge priority={plan.tasks[0].priority} />
                       </div>
                     ) : null}
                     <div className="flex flex-wrap items-center gap-1">
@@ -491,13 +483,18 @@ export function DecomposeDialog({
                     </div>
                     <ol className="flex flex-col gap-0.5 text-[11px] text-muted-foreground">
                       {plan.tasks.map((task, index) => (
-                        <li key={task.ref} className="truncate">
+                        <li key={`${task.ref}-${index}`} className="truncate">
                           {index + 1}. <span className="font-mono">{task.ref}</span> — {task.title}
+                          {task.parent_ref ? (
+                            <span className="text-muted-foreground"> (in {task.parent_ref})</span>
+                          ) : null}
                         </li>
                       ))}
                     </ol>
                     {plan.notes ? (
-                      <p className="text-[11px] text-muted-foreground">Notes: {plan.notes}</p>
+                      <p className="whitespace-pre-wrap text-[11px] text-muted-foreground">
+                        Notes: {plan.notes}
+                      </p>
                     ) : null}
                   </div>
                 ) : null}

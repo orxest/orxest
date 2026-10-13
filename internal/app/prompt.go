@@ -13,9 +13,11 @@ import (
 // Spec §20: only what the task needs is sent to an agent — never the whole
 // project database.
 type PromptInput struct {
-	Project      domain.Project
-	Issue        *domain.Issue
-	Task         domain.Task
+	Project domain.Project
+	Task    domain.Task
+	// Ancestors is the container chain above the task, outermost first. It
+	// replaces the issue context that tasks used to inherit.
+	Ancestors    []ports.TaskSummary
 	Workflow     domain.Workflow
 	Step         domain.WorkflowStep
 	Role         domain.Role
@@ -83,16 +85,28 @@ func BuildPrompt(in PromptInput) string {
 	fmt.Fprintf(&b, "- Workflow: %s\n", in.Workflow.Name)
 	fmt.Fprintf(&b, "- Current step: %s (role: %s)\n", in.Step.Name, in.Step.RoleID)
 	fmt.Fprintf(&b, "- Execution attempt: %d of this step\n", max(in.Task.AttemptCount, 1))
+	if in.Task.ParentTaskID != "" {
+		fmt.Fprintf(&b, "\n- Parent task: %s\n", in.Task.ParentTaskID)
+	}
+	if len(in.Task.Labels) > 0 {
+		fmt.Fprintf(&b, "- Labels: %s\n", strings.Join(in.Task.Labels, ", "))
+	}
 	fmt.Fprintf(&b, "\n### Task description\n\n%s\n", strings.TrimSpace(in.Task.Description))
 	if strings.TrimSpace(in.Task.AcceptanceCriteria) != "" {
 		fmt.Fprintf(&b, "\n### Acceptance criteria\n\n%s\n", strings.TrimSpace(in.Task.AcceptanceCriteria))
 	}
-	if in.Issue != nil {
-		fmt.Fprintf(&b, "\n## Issue context\n\n")
-		fmt.Fprintf(&b, "- Title: %s\n", in.Issue.Title)
-		fmt.Fprintf(&b, "- Description: %s\n", oneLine(in.Issue.Description))
-		if strings.TrimSpace(in.Issue.AcceptanceCriteria) != "" {
-			fmt.Fprintf(&b, "- Issue acceptance criteria: %s\n", oneLine(in.Issue.AcceptanceCriteria))
+	if len(in.Ancestors) > 0 {
+		// The broader outcome this task contributes to. Outermost first, so the
+		// agent reads from the general intent down to the immediate parent.
+		fmt.Fprintf(&b, "\n## Broader outcome this task contributes to\n\n")
+		for _, a := range in.Ancestors {
+			fmt.Fprintf(&b, "### %s\n\n", a.Title)
+			if strings.TrimSpace(a.Summary) != "" {
+				fmt.Fprintf(&b, "%s\n\n", strings.TrimSpace(a.Summary))
+			}
+			if strings.TrimSpace(a.AcceptanceCriteria) != "" {
+				fmt.Fprintf(&b, "Acceptance criteria for the broader outcome: %s\n\n", oneLine(a.AcceptanceCriteria))
+			}
 		}
 	}
 	if len(in.Dependencies) > 0 {
@@ -215,10 +229,28 @@ func architectInstructions() string {
 	return strings.Join([]string{
 		"You are executing a decomposition **planning** task, not an implementation task.",
 		"",
-		"Analyse the repository and the request above, then produce an issue and a set of tasks with",
-		"dependencies and verifiable acceptance criteria. Every task must be independently executable",
-		"by a single coding agent in one workflow run. Tasks must not assign agents: Orxest selects",
-		"agents from roles. Do not decide scheduling or sequencing beyond `depends_on` and `order_index`.",
+		"Analyse the repository and the request above, then produce one or more tasks with",
+		"dependencies and verifiable acceptance criteria. A task is the only user-visible work",
+		"item: there is no issue or epic entity to create. Every task must be independently",
+		"executable by a single coding agent in one workflow run. Tasks must not assign agents:",
+		"Orxest selects agents from roles. Do not decide scheduling or sequencing beyond",
+		"`depends_on`, `parent_ref` and `order_index`.",
+		"",
+		"Decomposition policy:",
+		"1. Produce exactly one task for a straightforward, self-contained change.",
+		"2. Split medium or complex intent into several tasks only where that improves execution,",
+		"   validation, independent assignment, or dependency management.",
+		"3. Prefer the smallest plan that can be executed reliably; avoid trivial microtasks.",
+		"4. Use `parent_ref` only where a parent represents a meaningful broader outcome. Never",
+		"   wrap a flat list in a synthetic parent.",
+		"5. Every executable task needs a concrete result and verifiable acceptance criteria. Add",
+		"   the tests, documentation, integration or validation tasks that are real units of work.",
+		"6. Express prerequisites with `depends_on`, never with ordering alone.",
+		"7. Do not require a type label. Add one only when it is useful, and never make a label a",
+		"   precondition for execution.",
+		"8. Inspect the existing project and repository context enough to avoid duplicate work.",
+		"9. Ask for clarification only when a missing decision materially blocks a useful and safe",
+		"   plan; otherwise make your assumptions explicit in `notes`.",
 		"",
 		"Do not change application source code. The only files you create are the plan files under",
 		"`" + PlanDirRelativePath + "/` described below.",
@@ -251,9 +283,13 @@ func architectPlanContract() string {
 		"```",
 		"",
 		"Rules:",
-		"- `issue.title` and `issue.description` are required.",
-		"- every task needs a unique plan-local `ref`, plus `title`, `description` and non-empty `acceptance_criteria`.",
+		"- `tasks` must contain at least one task.",
+		"- every task needs a unique plan-local `ref`, plus `title` and `description`.",
+		"- every task that is not the `parent_ref` of another task also needs non-empty `acceptance_criteria`.",
 		"- `depends_on` may only reference sibling `ref` values, and the graph must be acyclic.",
+		"- `parent_ref` may only reference a sibling `ref`, must not create a cycle, and a parent",
+		"  is a non-executable container: it must not depend on, or be depended on by, or contain,",
+		"  itself. Dependencies are a separate relation from hierarchy.",
 		"- do not assign agents, models, harnesses or roles: Orxest selects them.",
 	}, "\n")
 }

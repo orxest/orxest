@@ -159,7 +159,13 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 		}
 		tasks, err := s.deps.Store.Tasks().List(ctx, repository.TaskFilter{
 			ProjectID: project.ID,
-			Statuses:  []domain.TaskStatus{domain.TaskBacklog, domain.TaskReady, domain.TaskBlocked},
+			// Only executable work may be dispatched. Internal decomposition
+			// tasks are deliberately included: they are a planning record that
+			// the architect step runs. Containers are excluded outright, so a
+			// structural parent can never consume execution concurrency or be
+			// handed to an agent.
+			Statuses: []domain.TaskStatus{domain.TaskBacklog, domain.TaskReady, domain.TaskBlocked},
+			Kinds:    []domain.TaskKind{domain.TaskKindWork, domain.TaskKindDecomposition},
 		})
 		if err != nil {
 			return dispatched, err

@@ -475,12 +475,15 @@ func (s *ProjectService) Delete(ctx context.Context, id string, removeWorktrees 
 	return s.deps.Store.Projects().Delete(ctx, id)
 }
 
-// Stats summarises a project for its dashboard (spec §29).
+// Stats summarises a project for its dashboard (spec §29). Counts describe
+// user-visible work only: structural containers and internal architect planning
+// jobs are reported separately because neither is executable work.
 type ProjectStats struct {
-	Issues            int            `json:"issues"`
+	// Tasks counts executable work tasks.
 	Tasks             int            `json:"tasks"`
 	TaskStatus        map[string]int `json:"task_status"`
-	IssueStatus       map[string]int `json:"issue_status"`
+	Containers        int            `json:"containers"`
+	Planning          int            `json:"planning_jobs"`
 	RunningExecutions int            `json:"running_executions"`
 }
 
@@ -489,11 +492,21 @@ func (s *ProjectService) Stats(ctx context.Context, id string) (*ProjectStats, e
 	if _, err := s.deps.Store.Projects().Get(ctx, id); err != nil {
 		return nil, err
 	}
-	taskCounts, err := s.deps.Store.Tasks().CountByStatus(ctx, id)
+	taskCounts, err := s.deps.Store.Tasks().CountExecutableByStatus(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	issueCounts, err := s.deps.Store.Issues().CountByStatus(ctx, id)
+	planning, err := s.deps.Store.Tasks().List(ctx, repository.TaskFilter{
+		ProjectID: id,
+		Kinds:     []domain.TaskKind{domain.TaskKindDecomposition},
+	})
+	if err != nil {
+		return nil, err
+	}
+	containers, err := s.deps.Store.Tasks().List(ctx, repository.TaskFilter{
+		ProjectID: id,
+		Kinds:     []domain.TaskKind{domain.TaskKindContainer},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -502,17 +515,14 @@ func (s *ProjectService) Stats(ctx context.Context, id string) (*ProjectStats, e
 		return nil, err
 	}
 	stats := &ProjectStats{
-		TaskStatus:  map[string]int{},
-		IssueStatus: map[string]int{},
+		TaskStatus: map[string]int{},
 	}
 	for status, n := range taskCounts {
 		stats.TaskStatus[string(status)] = n
 		stats.Tasks += n
 	}
-	for status, n := range issueCounts {
-		stats.IssueStatus[string(status)] = n
-		stats.Issues += n
-	}
+	stats.Containers = len(containers)
+	stats.Planning = len(planning)
 	stats.RunningExecutions = active[id]
 	return stats, nil
 }

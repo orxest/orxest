@@ -13,7 +13,7 @@ it (see [`operations.md`](operations.md) for that).
                                     │
                        ┌────────────▼─────────────┐
                        │      internal/app        │  application services
-                       │  projects, issues, tasks │
+                       │  projects, tasks         │
                        │  workflow engine         │
                        │  scheduler, executions   │
                        │  planner                 │
@@ -127,14 +127,39 @@ Outcome mapping (from the agent's structured report, see §4):
 | `blocked` | blocked | task becomes `blocked`, failure kind `policy_failure` |
 | `cancelled` | cancelled | task returns to `ready` unless a human cancelled it |
 
+### Containers and derived progress
+
+A task is the single user-visible work item. It may be flat, or it may name an
+optional `parent_task_id`: a parent that another task decomposes becomes a
+structural **container** (`kind = container`). Containment is independent of
+`task_dependencies`, which stays a separate DAG of execution prerequisites;
+parenthood is never inferred from ordering or from dependency edges.
+
+A container is never dispatched. It has no workflow state, branch, worktree or
+retry budget of its own, and `TaskService.Start`/`Retry`/`Move`/`SetStatus`
+return a conflict if one is asked for. Its progress is a derived read model:
+`TaskService.Progress` counts the descendant executable `work` tasks and
+`domain.DeriveProgress` maps them onto an aggregate display status. That status
+is never written back onto the container, so the leaf tasks remain the only
+authoritative state machine. The board and project stats likewise exclude
+decomposition records and count only executable work.
+
+Adding a child turns a task into a container; when a container loses its last
+child, `TaskService.reconcileContainer` converts it back into executable work so
+an empty, permanently non-runnable container can never exist.
+
 ### Decomposition output contract
 
 A decomposition task is the one place where the agent's final message is **not**
 an execution report: the plan JSON *is* the result. The prompt therefore asks for
-exactly one output (`domain.ArchitectPlan` — `issue` plus `tasks` with `ref`,
-`title`, `description`, `acceptance_criteria` and optional `depends_on`) and
+exactly one output (`domain.ArchitectPlan` — a required `tasks` array with `ref`,
+`title`, `description`, `acceptance_criteria`, optional `depends_on`,
+`parent_ref`, `priority`, `labels`, `estimated_complexity` and `order_index`,
+plus optional operator `notes`) and
 deliberately omits the generic `status`/`summary` report contract, because asking
 for both made harnesses without structured-output support answer with the report.
+There is no root issue object: every plan entry is itself a user-visible task, and
+the original request survives as planning context in `notes`.
 
 Two safeguards keep planning working across adapters:
 
@@ -150,14 +175,16 @@ Two safeguards keep planning working across adapters:
   approval reads it from one place.
 
 Decoding is tolerant about shape, not about meaning: task labels `ref`, `id`,
-`key` and `task_id` are equivalent, acceptance criteria may be a string or a list
-of strings, and a bare `depends_on` id is treated as a one-element list. The
-semantic rules (required fields, unique refs, known dependency refs, acyclicity)
-are unchanged and still enforced.
+`key` and `task_id` are equivalent, parent labels `parent`, `parent_id` and
+`parent_task` become `parent_ref`, acceptance criteria may be a string or a list
+of strings, and a bare `depends_on` id is treated as a one-element list. A legacy
+root `issue` object in agent output is folded into `notes`, never persisted. The
+semantic rules (required fields, unique refs, known dependency and parent refs,
+acyclicity) are unchanged and still enforced.
 
 Agent output is untrusted in every path: both the message and the file go through
-`domain.ValidateArchitectPlan` (required fields, unique refs, known dependency
-refs, acyclicity) before anything is persisted.
+`domain.ValidateArchitectPlan` (required fields, unique refs, known dependency and
+parent refs, acyclicity) before anything is persisted.
 
 ### Recovering from an integration conflict
 
@@ -194,7 +221,8 @@ type Handle interface {
 
 This expresses the three operations the specification requires — start, stream,
 cancel — with streaming modelled as the handle's event channel. `ExecutionRequest`
-carries the focused context of one attempt: project, issue, task, workflow step,
+carries the focused context of one attempt: project, task, ancestor summaries
+(the container chain that replaces the removed issue context), workflow step,
 role, agent, dependency summaries, prompt, workspace, branch and timeout. The
 whole project database is never handed to an agent.
 
@@ -299,17 +327,30 @@ SQL. There is no ORM. Conventions:
   comparison is chronological.
 - Collections (labels, changed files, harness options) and structured payloads
   (execution results, event payloads) are JSON text.
-- Foreign keys are enforced (`PRAGMA foreign_keys=ON`), so deleting an issue
-  cascades to its tasks and deleting a task cascades to its dependencies and
-  executions.
+- Foreign keys are enforced (`PRAGMA foreign_keys=ON`), so deleting a task
+  cascades to its child tasks, its dependency edges and its executions.
 - Migrations live in `migrations/*.sql`, are embedded in the binary and applied
   in lexical order inside a transaction, recorded in `schema_migrations`.
 - `WithTx` hands the callback a transaction-bound `Store`; nested calls reuse the
   active transaction.
 
-Tables: `projects`, `repositories`, `issues`, `tasks`, `task_dependencies`,
+Tables: `projects`, `repositories`, `tasks`, `task_dependencies`,
 `roles`, `agents`, `project_agents`, `workflows`, `workflow_steps`,
 `executions`, `execution_events`, `events`, `schema_migrations`.
+
+`tasks` carries the optional `parent_task_id` (self-referencing, `ON DELETE
+CASCADE`), the structural `kind` (`work`, `container`, `decomposition`) and the
+metadata-only `source` (`manual`, `architect`). There is no `issues` table.
+
+Migration 0005 is data preserving. It rebuilds `tasks` (SQLite cannot drop a
+foreign-key column in place) to drop `issue_id` and add `parent_task_id` and
+`source`, converts a legacy issue with children into a `container` task and a
+legacy issue without children into one ordinary `work` task, and then drops the
+`issues` table and its indexes. Task ids, workflow pointers, attempt counters,
+branch/worktree paths and every execution/event row are left unchanged, so
+workspace ownership stays valid; the obsolete issue columns are dropped from the
+append-only `executions`/`events` history. Foreign keys are suspended only for the
+duration of the rebuild and re-enabled afterwards.
 
 `executions.metrics` stores the runtime statistics a harness reports (tokens,
 cache tokens, reasoning tokens, agent turns and cost), so a Pi or Codex run can
@@ -352,25 +393,32 @@ agent to use when a role has several. Both fall back to the deterministic rule
 
 ## 9. Architect decomposition
 
-Decomposition reuses the ordinary machinery: an issue is created for the
-request, and a **decomposition task** (task kind `decomposition`) is pinned to a
-lazily created single-step `planning` workflow whose step role is `architect`.
-The execution gets `--output-schema` (Codex) with the architect plan schema, so
-the agent must return structured data.
+Decomposition reuses the ordinary machinery. `POST /api/projects/{id}/decompose`
+creates a **decomposition task** (internal task kind `decomposition`, source
+`architect`) that belongs directly to the project and is pinned to a lazily
+created single-step `planning` workflow whose step role is `architect`. No issue
+or other root entity is created: the request text lives on that planning record,
+which is never shown as an ordinary work item. The execution gets
+`--output-schema` (Codex) with the architect plan schema, so the agent must
+return structured data.
 
 On success the engine does not advance the workflow: it hands the execution to
 `Planner`, which:
 
-1. re-validates the plan (`issue` plus tasks with title, description,
-   acceptance criteria and dependency refs);
-2. applies the refined issue fields to the existing issue;
-3. creates the child tasks in one transaction on the project's *default*
-   workflow, resolving `depends_on` refs to real task ids;
-4. marks the decomposition task done and wakes the scheduler.
+1. re-validates the plan (a non-empty `tasks` array with unique refs, a title and
+   description per task, acceptance criteria for every task that is not another
+   task's parent, known dependency and parent refs, acyclic dependency and
+   hierarchy graphs, and no container gating its own subtree);
+2. creates every proposed task in one transaction on the project's *default*
+   workflow, resolving `depends_on` refs to dependencies and `parent_ref` refs to
+   real parent ids, and inferring the `container` kind for a task another plan
+   entry names as its parent;
+3. marks the decomposition task done and wakes the scheduler.
 
-A plan can also be supplied directly through the API (`plan` in
-`POST /api/projects/{id}/decompose`), which keeps manual task creation first
-class.
+Nothing is persisted until the whole plan validates, so an invalid plan can never
+leave partial tasks behind. A validated plan can also be supplied directly
+through the API (`plan` in `POST /api/projects/{id}/decompose`), which keeps
+manual task creation first class.
 
 ## 10. Concurrency
 

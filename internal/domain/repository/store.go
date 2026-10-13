@@ -15,7 +15,6 @@ import (
 type Store interface {
 	Projects() ProjectRepository
 	Repositories() RepositoryRepository
-	Issues() IssueRepository
 	Tasks() TaskRepository
 	Roles() RoleRepository
 	Agents() AgentRepository
@@ -53,24 +52,6 @@ type RepositoryRepository interface {
 	Get(ctx context.Context, projectID string) (*domain.RepositoryState, error)
 }
 
-// IssueFilter narrows an issue listing.
-type IssueFilter struct {
-	ProjectID string
-	Status    domain.IssueStatus
-	Limit     int
-	Offset    int
-}
-
-// IssueRepository persists issues.
-type IssueRepository interface {
-	Create(ctx context.Context, i *domain.Issue) error
-	Get(ctx context.Context, id string) (*domain.Issue, error)
-	List(ctx context.Context, f IssueFilter) ([]domain.Issue, error)
-	Update(ctx context.Context, i *domain.Issue) error
-	Delete(ctx context.Context, id string) error
-	CountByStatus(ctx context.Context, projectID string) (map[domain.IssueStatus]int, error)
-}
-
 // TaskDependencyStatus is a dependency edge joined with the dependency's state.
 type TaskDependencyStatus struct {
 	TaskID string            `json:"task_id"`
@@ -78,12 +59,32 @@ type TaskDependencyStatus struct {
 	Status domain.TaskStatus `json:"status"`
 }
 
+// TaskProgress is the derived progress of a container's descendant work tasks.
+// It is computed on read and never stored on the container itself.
+type TaskProgress struct {
+	TaskID    string                    `json:"task_id"`
+	Total     int                       `json:"total"`
+	Done      int                       `json:"done"`
+	Failed    int                       `json:"failed"`
+	Cancelled int                       `json:"cancelled"`
+	Progress  domain.DescendantProgress `json:"progress"`
+}
+
 // TaskFilter narrows a task listing, used by the board and the API.
 type TaskFilter struct {
 	ProjectID string
-	IssueID   string
-	Status    domain.TaskStatus
-	Statuses  []domain.TaskStatus
+	// ParentTaskID filters by direct parent. When ParentSet is true an empty
+	// ParentTaskID means "top-level tasks only".
+	ParentTaskID string
+	ParentSet    bool
+	Status       domain.TaskStatus
+	Statuses     []domain.TaskStatus
+	// Kinds restricts the listing to structural task kinds. It is how the board
+	// excludes internal decomposition tasks and how the scheduler excludes
+	// non-executable containers.
+	Kinds []domain.TaskKind
+	// RootsOnly restricts the listing to tasks without a parent.
+	RootsOnly bool
 	Limit     int
 	Offset    int
 	// OrderByCreated orders by creation time ascending (deterministic default).
@@ -115,6 +116,26 @@ type TaskRepository interface {
 	// task. The scheduler uses it to decide readiness and to explain blocking.
 	DependencyStatuses(ctx context.Context, taskID string) ([]TaskDependencyStatus, error)
 
+	// Children returns the direct children of a task, ordered deterministically.
+	Children(ctx context.Context, parentTaskID string) ([]domain.Task, error)
+	// Ancestors returns the container chain above a task, outermost first.
+	Ancestors(ctx context.Context, taskID string) ([]domain.Task, error)
+	// Descendants returns every task below a task, excluding the task itself.
+	Descendants(ctx context.Context, taskID string) ([]domain.Task, error)
+	// Progress returns derived progress for a task from its descendant work
+	// tasks. Containers have no execution of their own, so this is a read model.
+	Progress(ctx context.Context, taskID string) (TaskProgress, error)
+	// ReachableByParent reports whether `to` is reachable from `from` following
+	// parent edges. It is used to reject hierarchy cycles.
+	ReachableByParent(ctx context.Context, from, to string) (bool, error)
+	// CountChildren returns how many direct children a task has.
+	CountChildren(ctx context.Context, taskID string) (int, error)
+
 	CountByStatus(ctx context.Context, projectID string) (map[domain.TaskStatus]int, error)
-	NextOrderIndex(ctx context.Context, issueID string) (int, error)
+	// CountExecutableByStatus counts only executable work tasks, so containers
+	// and internal decomposition tasks never appear as project work.
+	CountExecutableByStatus(ctx context.Context, projectID string) (map[domain.TaskStatus]int, error)
+	// NextOrderIndex returns the next ordering slot inside a project. When
+	// parentTaskID is set the slot is scoped to that container's children.
+	NextOrderIndex(ctx context.Context, projectID, parentTaskID string) (int, error)
 }

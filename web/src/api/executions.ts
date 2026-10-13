@@ -27,12 +27,3 @@ export const executionsApi = {
 
   log: (executionId: string) => request<ExecutionLog>(`/executions/${executionId}/log`),
 }
-
-export interface IssueUpdateInput {
-  title?: string
-  description?: string
-  priority?: number
-  status?: string
-  labels?: string[]
-  acceptance_criteria?: string
-}

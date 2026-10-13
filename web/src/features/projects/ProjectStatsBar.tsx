@@ -43,9 +43,10 @@ function StatTile({
 }
 
 /**
- * Per-project dashboard tiles: task totals, the running executions, issue
- * counts, the "in progress" / "needs attention" buckets and a colour coded
- * per-status breakdown. Tiles render skeletons while the stats load.
+ * Per-project dashboard tiles. Executable work is counted on its own; the
+ * structural containers that group it and the internal architect planning
+ * records are reported separately, because neither is project work. Tiles
+ * render skeletons while the stats load.
  */
 export function ProjectStatsBar({
   projectId,
@@ -89,56 +90,57 @@ export function ProjectStatsBar({
   return (
     <div className="flex flex-col gap-2">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        <StatTile label="Tasks" value={data.tasks} hint="Total tasks tracked in this project" />
         <StatTile
-          label="Running"
-          value={data.running_executions}
-          hint="Executions currently in flight"
+          label="Tasks"
+          value={data.tasks}
+          hint="Executable work tasks in this project (containers and planning records are excluded)"
         />
-        <StatTile label="Issues" value={data.issues} hint="Issues tracked in this project" />
         <StatTile
-          label="In progress"
-          value={inProgress}
-          hint="Queued and running tasks"
+          label="Containers"
+          value={data.containers}
+          hint="Structural parents grouping work; never executed"
         />
+        <StatTile
+          label="Planning"
+          value={data.planning_jobs}
+          hint="Internal architect planning records; not project work"
+        />
+        <StatTile label="Running" value={data.running_executions} hint="Executions currently in flight" />
+        <StatTile label="In progress" value={inProgress} hint="Queued and running tasks" />
         <StatTile
           label="Needs attention"
           value={needsAttention}
           hint="Blocked, failed or waiting for a human review"
         />
-        <StatTile
-          label="Agents"
-          value={agents.isError ? '—' : (agents.data?.items.length ?? 0)}
-          loading={agents.isLoading}
-          hint={
-            agents.isError
-              ? `Agent assignments unavailable: ${errorMessage(agents.error)}`
-              : 'Agent assignments configured on this project'
-          }
-        />
       </div>
 
-      {breakdown.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Task status
-          </span>
-          {breakdown.map((status) => (
-            <Badge
-              key={status}
-              variant={TASK_STATUS_META[status].variant}
-              title={TASK_STATUS_META[status].description}
-            >
-              {TASK_STATUS_META[status].label}
-              <span className="font-mono">{count(status)}</span>
-            </Badge>
-          ))}
-        </div>
-      ) : (
-        <p className="text-[11px] text-muted-foreground">
-          No tasks yet — create an issue on the Issues tab or from the board to get work moving.
-        </p>
-      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {breakdown.length > 0 ? (
+          <>
+            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Task status
+            </span>
+            {breakdown.map((status) => (
+              <Badge
+                key={status}
+                variant={TASK_STATUS_META[status].variant}
+                title={TASK_STATUS_META[status].description}
+              >
+                {TASK_STATUS_META[status].label}
+                <span className="font-mono">{count(status)}</span>
+              </Badge>
+            ))}
+          </>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            No tasks yet — add one from the Tasks tab, or plan the work with the architect.
+          </p>
+        )}
+        <span className="ml-auto text-[11px] text-muted-foreground">
+          {agents.isError ? '—' : (agents.data?.items.length ?? 0)} agent assignment
+          {(agents.data?.items.length ?? 0) === 1 ? '' : 's'}
+        </span>
+      </div>
     </div>
   )
 }
@@ -183,9 +185,19 @@ export function ProjectStatsBadges({
 
   return (
     <div className={cn('flex flex-wrap items-center gap-1', className)}>
-      <Badge variant="outline" title="Total tasks in this project">
+      <Badge variant="outline" title="Executable work tasks in this project">
         {data.tasks} tasks
       </Badge>
+      {data.containers > 0 ? (
+        <Badge variant="purple" title="Structural parents grouping work; never executed">
+          {data.containers} containers
+        </Badge>
+      ) : null}
+      {data.planning_jobs > 0 ? (
+        <Badge variant="info" title="Internal architect planning records; not project work">
+          {data.planning_jobs} planning
+        </Badge>
+      ) : null}
       {data.running_executions > 0 ? (
         <Badge variant="default" title="Executions currently in flight">
           {data.running_executions} running

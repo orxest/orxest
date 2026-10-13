@@ -51,7 +51,6 @@ func TestPlanCycleIsRejectedWithoutPartialWrites(t *testing.T) {
 	ctx := context.Background()
 	repo := testsupport.Repository(t, "main")
 	plan := map[string]any{
-		"issue": map[string]any{"title": "Cycle", "description": "d"},
 		"tasks": []any{
 			map[string]any{"ref": "t1", "title": "a", "description": "d", "acceptance_criteria": "ac", "depends_on": []any{"t2"}},
 			map[string]any{"ref": "t2", "title": "b", "description": "d", "acceptance_criteria": "ac", "depends_on": []any{"t1"}},
@@ -83,7 +82,7 @@ func TestPlanCycleIsRejectedWithoutPartialWrites(t *testing.T) {
 	if !strings.Contains(failed.LastError, "cycle") {
 		t.Errorf("expected the error to mention the dependency cycle, got %q", failed.LastError)
 	}
-	tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{IssueID: result.Issue.ID})
+	tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{ProjectID: result.Task.ProjectID})
 	if err != nil {
 		t.Fatalf("listing tasks: %v", err)
 	}
@@ -98,7 +97,6 @@ func TestPlanRejectionRerunsTheArchitect(t *testing.T) {
 	ctx := context.Background()
 	repo := testsupport.Repository(t, "main")
 	plan := map[string]any{
-		"issue": map[string]any{"title": "Draft", "description": "d"},
 		"tasks": []any{
 			map[string]any{"ref": "t1", "title": "Only task", "description": "d", "acceptance_criteria": "ac"},
 		},
@@ -128,7 +126,7 @@ func TestPlanRejectionRerunsTheArchitect(t *testing.T) {
 	if _, err := svc.Engine.Reject(ctx, result.Task.ID, "scope is wrong"); err != nil {
 		t.Fatalf("rejecting the plan: %v", err)
 	}
-	tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{IssueID: result.Issue.ID})
+	tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{ProjectID: result.Task.ProjectID})
 	if err != nil {
 		t.Fatalf("listing tasks: %v", err)
 	}
@@ -161,7 +159,7 @@ func TestReviewerChangesRequestedRoutesToImplementation(t *testing.T) {
 	)
 	svc := testsupport.Service(t, testsupport.Options{Harnesses: harnesses(harness)})
 	project := newProject(t, svc, repo)
-	task := newIssueAndTask(t, svc, project, "Implement JWT authentication", nil)
+	task := newProjectTask(t, svc, project, "Implement JWT authentication", nil)
 
 	// The first reviewer verdict must send the task back to implementation,
 	// never into the approval gate or into integration. Driving on the execution
@@ -193,7 +191,7 @@ func TestApprovalGateBlocksIntegration(t *testing.T) {
 	repo := testsupport.Repository(t, "main")
 	svc := testsupport.Service(t, testsupport.Options{Harnesses: harnesses(fake.New())})
 	project := newProject(t, svc, repo)
-	task := newIssueAndTask(t, svc, project, "Implement JWT authentication", nil)
+	task := newProjectTask(t, svc, project, "Implement JWT authentication", nil)
 
 	drive(t, svc, "the task to reach the approval gate", func() bool {
 		return loadTask(t, svc, task.ID).Status == domain.TaskReview
@@ -237,7 +235,7 @@ func TestIntegrationProtectsThePrimaryCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Do the work", nil)
+	task := newProjectTask(t, svc, &project.Project, "Do the work", nil)
 	drive(t, svc, "the task to complete", func() bool {
 		return loadTask(t, svc, task.ID).Status == domain.TaskDone
 	})
@@ -281,8 +279,8 @@ func TestAutoIntegrateDisabledWaitsForIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	first := newIssueAndTask(t, svc, &project.Project, "First", nil)
-	second := newIssueAndTask(t, svc, &project.Project, "Second", []string{first.ID})
+	first := newProjectTask(t, svc, &project.Project, "First", nil)
+	second := newProjectTask(t, svc, &project.Project, "Second", []string{first.ID})
 
 	drive(t, svc, "the first task to await integration", func() bool {
 		return loadTask(t, svc, first.ID).Status == domain.TaskIntegrationPending
@@ -345,7 +343,7 @@ func TestConcurrentTicksNeverDoubleDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "One task", nil)
+	task := newProjectTask(t, svc, &project.Project, "One task", nil)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
@@ -388,7 +386,7 @@ func TestRestartReconcilesRunningExecutions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Interrupted", nil)
+	task := newProjectTask(t, svc, &project.Project, "Interrupted", nil)
 	workflow, err := svc.Workflows.Default(ctx, project.Project.ID)
 	if err != nil {
 		t.Fatalf("loading workflow: %v", err)
@@ -400,7 +398,7 @@ func TestRestartReconcilesRunningExecutions(t *testing.T) {
 	now := time.Now().UTC()
 	exec := &domain.Execution{
 		ID: domain.NewID(domain.IDPrefixExecution), ProjectID: project.Project.ID,
-		TaskID: task.ID, IssueID: task.IssueID, AgentID: "agt_crashed", AgentName: "crashed",
+		TaskID: task.ID, AgentID: "agt_crashed", AgentName: "crashed",
 		RoleID: step.RoleID, WorkflowID: workflow.ID, WorkflowStepID: step.ID, WorkflowStepName: step.Name,
 		Harness: "fake", Status: domain.ExecutionRunning, Attempt: 1, CreatedAt: now, StartedAt: &now,
 	}
@@ -449,7 +447,7 @@ func TestMinimalWorkflowNeedsNoArchitect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Small change", nil)
+	task := newProjectTask(t, svc, &project.Project, "Small change", nil)
 	drive(t, svc, "the task to complete without an architect", func() bool {
 		return loadTask(t, svc, task.ID).Status == domain.TaskDone
 	})
@@ -484,7 +482,7 @@ func TestRoleSelectionIsScopedAndDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Needs a developer", nil)
+	task := newProjectTask(t, svc, &project.Project, "Needs a developer", nil)
 	drive(t, svc, "the task to be blocked by policy", func() bool {
 		blocked := loadTask(t, svc, task.ID)
 		return blocked.Status == domain.TaskBlocked && blocked.FailureKind == domain.FailurePolicy
@@ -580,8 +578,8 @@ func TestTaskWorkspaceIsPerTaskAndPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	first := newIssueAndTask(t, svc, &project.Project, "First task", nil)
-	second := newIssueAndTask(t, svc, &project.Project, "Second task", nil)
+	first := newProjectTask(t, svc, &project.Project, "First task", nil)
+	second := newProjectTask(t, svc, &project.Project, "Second task", nil)
 
 	drive(t, svc, "both tasks to reach the approval gate", func() bool {
 		return loadTask(t, svc, first.ID).Status == domain.TaskReview &&
@@ -666,7 +664,7 @@ func TestIntegrationConflictIsExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Conflicting work", nil)
+	task := newProjectTask(t, svc, &project.Project, "Conflicting work", nil)
 	// The task record carries the intended workspace path as soon as it is
 	// dispatched, so wait for the worktree to actually exist on disk.
 	drive(t, svc, "the task branch to be created", func() bool {
@@ -793,7 +791,7 @@ func TestExecutionTimeoutIsClassifiedAsTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Slow work", nil)
+	task := newProjectTask(t, svc, &project.Project, "Slow work", nil)
 	drive(t, svc, "the task to fail with a timeout", func() bool {
 		current := loadTask(t, svc, task.ID)
 		return current.Status == domain.TaskFailed
@@ -811,7 +809,6 @@ func TestPlanCanBeEditedBeforeApproval(t *testing.T) {
 	ctx := context.Background()
 	repo := testsupport.Repository(t, "main")
 	draft := map[string]any{
-		"issue": map[string]any{"title": "Draft issue", "description": "d"},
 		"tasks": []any{
 			map[string]any{"ref": "t1", "title": "Draft task", "description": "d", "acceptance_criteria": "ac"},
 		},
@@ -844,21 +841,17 @@ func TestPlanCanBeEditedBeforeApproval(t *testing.T) {
 
 	// A structurally invalid edit is rejected and nothing is persisted.
 	bad := &domain.ArchitectPlan{
-		Issue: domain.ArchitectIssue{Title: "Edited", Description: "d"},
 		Tasks: []domain.ArchitectTask{{Ref: "t1", Title: "no criteria", Description: "d"}},
 	}
 	if _, err := svc.Engine.ApprovePlan(ctx, result.Task.ID, bad); err == nil {
 		t.Fatal("expected an invalid edited plan to be rejected")
 	}
-	if len(mustTasks(t, svc, result.Issue.ID)) != 1 {
+	if len(mustTasks(t, svc, result.Task.ID)) != 1 {
 		t.Fatal("an invalid edited plan must not persist any task")
 	}
 
 	edited := &domain.ArchitectPlan{
-		Issue: domain.ArchitectIssue{
-			Title: "Edited issue", Description: "edited description", Priority: domain.PriorityHigh,
-			AcceptanceCriteria: "edited acceptance criteria",
-		},
+		Notes: "edited plan",
 		Tasks: []domain.ArchitectTask{
 			{Ref: "a", Title: "Edited task one", Description: "d", AcceptanceCriteria: "ac one"},
 			{Ref: "b", Title: "Edited task two", Description: "d", AcceptanceCriteria: "ac two", DependsOn: []string{"a"}},
@@ -867,7 +860,7 @@ func TestPlanCanBeEditedBeforeApproval(t *testing.T) {
 	if _, err := svc.Engine.ApprovePlan(ctx, result.Task.ID, edited); err != nil {
 		t.Fatalf("approving the edited plan: %v", err)
 	}
-	tasks := mustTasks(t, svc, result.Issue.ID)
+	tasks := mustTasks(t, svc, result.Task.ID)
 	if len(tasks) != 3 {
 		t.Fatalf("expected the decomposition task plus two edited tasks, got %d", len(tasks))
 	}
@@ -888,18 +881,30 @@ func TestPlanCanBeEditedBeforeApproval(t *testing.T) {
 	if len(deps) != 1 || deps[0].TaskID != byTitle["Edited task one"].ID {
 		t.Errorf("expected the edited dependency edge, got %+v", deps)
 	}
-	issue, err := svc.Issues.Get(ctx, result.Issue.ID)
-	if err != nil {
-		t.Fatalf("loading the issue: %v", err)
-	}
-	if issue.Title != "Edited issue" || issue.AcceptanceCriteria != "edited acceptance criteria" {
-		t.Errorf("expected the edited issue fields, got %q / %q", issue.Title, issue.AcceptanceCriteria)
+	// The human-edited plan replaced the architect draft entirely.
+	for _, title := range []string{"Edited task one", "Edited task two"} {
+		task, ok := byTitle[title]
+		if !ok {
+			continue
+		}
+		if task.AcceptanceCriteria == "" {
+			t.Errorf("edited task %q lost its acceptance criteria", title)
+		}
+		if task.Source != domain.SourceArchitect {
+			t.Errorf("edited task %q must be architect sourced, got %q", title, task.Source)
+		}
 	}
 }
 
-func mustTasks(t *testing.T, svc *app.Service, issueID string) []domain.Task {
+// mustTasks lists every task of the project that owns planningTaskID. There is
+// no issue to scope the listing by in the task-centric model.
+func mustTasks(t *testing.T, svc *app.Service, planningTaskID string) []domain.Task {
 	t.Helper()
-	tasks, err := svc.Tasks.List(context.Background(), repository.TaskFilter{IssueID: issueID})
+	planning, err := svc.Tasks.Get(context.Background(), planningTaskID)
+	if err != nil {
+		t.Fatalf("loading the planning task: %v", err)
+	}
+	tasks, err := svc.Tasks.List(context.Background(), repository.TaskFilter{ProjectID: planning.ProjectID})
 	if err != nil {
 		t.Fatalf("listing tasks: %v", err)
 	}
@@ -926,7 +931,7 @@ func TestUntrackedFilesInTheCheckoutDoNotBlockIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Do the work", nil)
+	task := newProjectTask(t, svc, &project.Project, "Do the work", nil)
 	drive(t, svc, "the task to complete", func() bool {
 		return loadTask(t, svc, task.ID).Status == domain.TaskDone
 	})
@@ -970,7 +975,7 @@ func TestConflictCanBeHandedBackToAnAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Conflicting work", nil)
+	task := newProjectTask(t, svc, &project.Project, "Conflicting work", nil)
 	drive(t, svc, "the task branch to be created", func() bool {
 		current := loadTask(t, svc, task.ID)
 		if current.WorkspacePath == "" {

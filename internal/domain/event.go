@@ -11,8 +11,6 @@ const (
 	// pause, which holds every task of the project (spec §45).
 	EventProjectPaused  = "project.paused"
 	EventProjectResumed = "project.resumed"
-	EventIssueCreated   = "issue.created"
-	EventIssueUpdated   = "issue.updated"
 	EventTaskCreated    = "task.created"
 	EventTaskUpdated    = "task.updated"
 	EventTaskReady      = "task.ready"
@@ -50,7 +48,6 @@ const (
 type Event struct {
 	ID          string         `json:"id"`
 	ProjectID   string         `json:"project_id,omitempty"`
-	IssueID     string         `json:"issue_id,omitempty"`
 	TaskID      string         `json:"task_id,omitempty"`
 	ExecutionID string         `json:"execution_id,omitempty"`
 	Type        string         `json:"type"`

@@ -15,14 +15,18 @@ export const qk = {
   board: (projectId: string) => ['projects', projectId, 'board'] as const,
   projectEvents: (projectId: string, limit: number) =>
     ['projects', projectId, 'events', limit] as const,
-  projectIssues: (projectId: string) => ['projects', projectId, 'issues'] as const,
+  /** User-visible work (`work` plus `container` parents). */
+  projectTasks: (projectId: string) => ['projects', projectId, 'tasks'] as const,
+  /**
+   * Internal architect planning records. Nested under `projectTasks` so that
+   * invalidating the task listing refreshes the planning listing with it.
+   */
+  projectPlanningTasks: (projectId: string) =>
+    ['projects', projectId, 'tasks', 'planning'] as const,
   projectAgents: (projectId: string) => ['projects', projectId, 'agents'] as const,
   projectStaffing: (projectId: string) => ['projects', projectId, 'staffing'] as const,
   projectRepository: (projectId: string) => ['projects', projectId, 'repository'] as const,
   projectWorkflow: (projectId: string) => ['projects', projectId, 'workflow'] as const,
-
-  issue: (issueId: string) => ['issues', issueId] as const,
-  issueTasks: (issueId: string) => ['issues', issueId, 'tasks'] as const,
 
   task: (taskId: string) => ['tasks', taskId] as const,
   taskDetail: (taskId: string) => ['tasks', taskId, 'detail'] as const,

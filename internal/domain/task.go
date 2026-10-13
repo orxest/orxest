@@ -164,32 +164,73 @@ func (f FailureKind) AutoRecoverable() bool {
 	return false
 }
 
-// TaskKind distinguishes ordinary work tasks from orchestration-only tasks.
+// TaskKind distinguishes ordinary work tasks from orchestration-only tasks and
+// from structural containers. It describes how Orxest treats a task internally;
+// it is never the user's feature/bug/category classification, which is optional
+// metadata carried in Labels.
 type TaskKind string
 
 const (
-	// TaskKindWork is a normal unit of software work.
+	// TaskKindWork is a normal, independently executable unit of software work.
 	TaskKindWork TaskKind = "work"
-	// TaskKindDecomposition is a task whose successful execution produces an
-	// architect plan (issues, tasks, dependencies) instead of code.
+	// TaskKindContainer is a structural parent that represents a broader
+	// outcome. It groups child tasks, provides them with context, and is never
+	// dispatched to an agent: it has no execution, branch or worktree.
+	TaskKindContainer TaskKind = "container"
+	// TaskKindDecomposition is an internal planning task whose successful
+	// execution produces an architect plan instead of code. It is not a
+	// user-facing work item.
 	TaskKindDecomposition TaskKind = "decomposition"
 )
 
-// Task is the smallest independently executable unit of work. A task never
-// carries a permanent role, agent, model or harness: those belong to the
-// workflow step and the execution (spec §7).
+// AllTaskKinds lists every valid task kind.
+func AllTaskKinds() []TaskKind {
+	return []TaskKind{TaskKindWork, TaskKindContainer, TaskKindDecomposition}
+}
+
+// Valid reports whether the kind is a known task kind.
+func (k TaskKind) Valid() bool {
+	for _, v := range AllTaskKinds() {
+		if v == k {
+			return true
+		}
+	}
+	return false
+}
+
+// Executable reports whether the scheduler may dispatch the kind to an agent.
+// Containers and internal decomposition tasks are never dispatched as ordinary
+// work.
+func (k TaskKind) Executable() bool {
+	return k == TaskKindWork
+}
+
+// Task is the smallest independently executable unit of work, and the single
+// user-facing work-item entity of a project. A task never carries a permanent
+// role, agent, model or harness: those belong to the workflow step and the
+// execution (spec §7).
 type Task struct {
 	ID        string `json:"id"`
 	ProjectID string `json:"project_id"`
-	IssueID   string `json:"issue_id"`
+	// ParentTaskID is optional. It expresses containment/decomposition: a child
+	// task contributes to the broader outcome its parent represents. It is
+	// deliberately independent of TaskDependency, which expresses execution
+	// prerequisites.
+	ParentTaskID string `json:"parent_task_id,omitempty"`
 
 	Title              string     `json:"title"`
 	Description        string     `json:"description"`
 	Priority           int        `json:"priority"`
 	Status             TaskStatus `json:"status"`
 	AcceptanceCriteria string     `json:"acceptance_criteria"`
-	Labels             []string   `json:"labels"`
-	Kind               TaskKind   `json:"kind"`
+	// Labels is optional user-facing classification such as `bug`, `feature`,
+	// `refactoring`, `research` or `documentation`. Labels never determine
+	// whether or how the scheduler executes a task.
+	Labels []string `json:"labels"`
+	Kind   TaskKind `json:"kind"`
+	// Source records where the task came from (manual or architect). It is
+	// metadata only: it never changes scheduler behaviour.
+	Source string `json:"source"`
 
 	// WorkflowID pins the task to the project workflow it was created with, so
 	// that editing the project workflow later does not silently re-route work
@@ -240,6 +281,66 @@ type TaskDependency struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
+// IsContainer reports whether the task is a structural parent that groups child
+// tasks instead of being independently executable.
+func (t *Task) IsContainer() bool {
+	return t != nil && t.Kind == TaskKindContainer
+}
+
+// IsExecutableWork reports whether the task is ordinary executable work. Only
+// these tasks may enter the ready queue, consume execution concurrency, or own
+// a branch and worktree.
+func (t *Task) IsExecutableWork() bool {
+	return t != nil && t.Kind == TaskKindWork
+}
+
+// IsDecomposition reports whether the task is an internal architect planning
+// record rather than a user-facing work item.
+func (t *Task) IsDecomposition() bool {
+	return t != nil && t.Kind == TaskKindDecomposition
+}
+
+// DescendantProgress summarises the executable work below a container.
+type DescendantProgress struct {
+	// Total is the number of descendant executable work tasks.
+	Total int `json:"total"`
+	// Done is how many of them reached TaskDone.
+	Done int `json:"done"`
+	// Failed is how many of them reached TaskFailed.
+	Failed int `json:"failed"`
+	// Cancelled is how many of them reached TaskCancelled.
+	Cancelled int `json:"cancelled"`
+	// Executable is how many are neither done, failed nor cancelled.
+	Executable int `json:"executable"`
+	// Status is a derived aggregate status for display. It is never persisted
+	// onto the container: the leaf tasks remain the authoritative state machine.
+	Status TaskStatus `json:"status"`
+}
+
+// DeriveProgress computes the aggregate status of a container from its
+// descendant work tasks. The result is a read model only.
+func DeriveProgress(total, done, failed, cancelled int) DescendantProgress {
+	p := DescendantProgress{
+		Total: total, Done: done, Failed: failed, Cancelled: cancelled,
+	}
+	p.Executable = total - done - failed - cancelled
+	switch {
+	case total == 0:
+		p.Status = TaskBacklog
+	case p.Executable > 0 && done == 0 && failed == 0:
+		p.Status = TaskBacklog
+	case p.Executable > 0:
+		p.Status = TaskReady
+	case failed > 0:
+		p.Status = TaskFailed
+	case done == total:
+		p.Status = TaskDone
+	default:
+		p.Status = TaskCancelled
+	}
+	return p
+}
+
 // Validate checks structural invariants of a task.
 func (t *Task) Validate() error {
 	if strings.TrimSpace(t.Title) == "" {
@@ -251,8 +352,8 @@ func (t *Task) Validate() error {
 	if strings.TrimSpace(t.ProjectID) == "" {
 		return Invalidf("project_id", "must not be empty")
 	}
-	if strings.TrimSpace(t.IssueID) == "" {
-		return Invalidf("issue_id", "must not be empty")
+	if t.ParentTaskID == t.ID && t.ID != "" {
+		return Invalidf("parent_task_id", "a task cannot be its own parent")
 	}
 	if t.Status == "" {
 		t.Status = TaskBacklog
@@ -263,9 +364,14 @@ func (t *Task) Validate() error {
 	if t.Kind == "" {
 		t.Kind = TaskKindWork
 	}
-	if t.Kind != TaskKindWork && t.Kind != TaskKindDecomposition {
+	if !t.Kind.Valid() {
 		return Invalidf("kind", "unknown task kind %q", t.Kind)
 	}
+	if t.Source == "" {
+		t.Source = SourceManual
+	}
+	// A container is not executed, so it does not need executable acceptance
+	// criteria of its own; its descendants carry them.
 	if t.Priority < 0 || t.Priority > PriorityCritical {
 		return Invalidf("priority", "must be between 0 and %d", PriorityCritical)
 	}

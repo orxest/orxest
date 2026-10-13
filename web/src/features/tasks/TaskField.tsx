@@ -4,10 +4,10 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 
 /**
- * Compact label + control + validation message used by every issue form.
- * Keeps spacing and error styling identical across the dialogs.
+ * Compact label + control + validation message shared by the task forms, so
+ * spacing and error styling stay identical across the dialogs.
  */
-export function IssueField({
+export function TaskField({
   label,
   htmlFor,
   error,

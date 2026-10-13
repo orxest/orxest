@@ -4,8 +4,8 @@ import { IdChip } from '@/components/common/IdChip'
 import { KeyValue, KeyValueGrid } from '@/components/common/KeyValue'
 import {
   FailureKindBadge,
-  IssueStatusBadge,
   PriorityBadge,
+  TaskKindBadge,
   TaskStatusBadge,
 } from '@/components/common/StatusBadge'
 import { Badge } from '@/components/ui/badge'
@@ -25,10 +25,14 @@ import type { TaskDetail } from '@/types'
  * view has to expose. Read-only: mutations live in the header actions.
  */
 export function TaskSummaryPanel({ detail, now }: { detail: TaskDetail; now: number }) {
-  const { task, issue, project, workflow } = detail
+  const { task, project, workflow } = detail
   const lastExecution = detail.current_execution ?? detail.executions?.[0]
   const labels = task.labels ?? []
   const maxAttempts = task.max_attempts > 0 ? String(task.max_attempts) : '∞'
+  const parent = detail.parent
+  const ancestors = detail.ancestors ?? []
+  const children = detail.children ?? []
+  const progress = detail.progress?.progress
 
   return (
     <Card>
@@ -87,7 +91,12 @@ export function TaskSummaryPanel({ detail, now }: { detail: TaskDetail; now: num
             <PriorityBadge priority={task.priority} />
           </KeyValue>
           <KeyValue label="Kind">
-            <Badge variant={task.kind === 'decomposition' ? 'purple' : 'outline'}>{task.kind}</Badge>
+            <span className="inline-flex flex-wrap items-center gap-1.5">
+              <TaskKindBadge kind={task.kind} />
+              <Badge variant={task.source === 'architect' ? 'purple' : 'muted'}>
+                {task.source === 'architect' ? 'architect' : 'manual'}
+              </Badge>
+            </span>
           </KeyValue>
 
           <KeyValue label="Attempts">
@@ -100,30 +109,13 @@ export function TaskSummaryPanel({ detail, now }: { detail: TaskDetail; now: num
           </KeyValue>
           <KeyValue label="Current step">{task.current_workflow_step || '—'}</KeyValue>
 
-          <KeyValue label="Issue">
-            {issue ? (
-              <Link
-                to={`/projects/${task.project_id}/issues`}
-                className="inline-flex max-w-full items-center gap-1.5 hover:underline"
-                title={issue.title}
-              >
-                <IssueStatusBadge status={issue.status} />
-                <span className="truncate">{issue.title}</span>
-              </Link>
-            ) : (
-              '—'
-            )}
-          </KeyValue>
-          <KeyValue label="Issue id">
-            <IdChip value={task.issue_id} />
-          </KeyValue>
           <KeyValue label="Task id">
             <IdChip value={task.id} />
           </KeyValue>
 
           <KeyValue label="Project">
             {project ? (
-              <Link to={`/projects/${project.id}/board`} className="hover:underline">
+              <Link to={`/projects/${project.id}/tasks`} className="hover:underline">
                 {project.name}
               </Link>
             ) : (
@@ -216,6 +208,72 @@ export function TaskSummaryPanel({ detail, now }: { detail: TaskDetail; now: num
             )}
           </KeyValue>
         </KeyValueGrid>
+
+        <Separator />
+
+        <section className="flex flex-col gap-2" aria-label="Hierarchy">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Hierarchy
+          </p>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] text-muted-foreground">
+              {parent
+                ? 'This task belongs to a container.'
+                : 'This is a top-level task; it belongs to no container.'}
+            </span>
+            {parent ? (
+              <Link
+                to={`/tasks/${parent.id}`}
+                className="flex min-w-0 items-center gap-1.5 text-xs hover:underline"
+                title={parent.title}
+              >
+                <TaskKindBadge kind={parent.kind} />
+                <span className="truncate">{parent.title}</span>
+              </Link>
+            ) : null}
+            {ancestors.filter((ancestor) => ancestor.id !== parent?.id).length > 0 ? (
+              <span className="text-[11px] text-muted-foreground">
+                Ancestors:{' '}
+                {ancestors
+                  .filter((ancestor) => ancestor.id !== parent?.id)
+                  .map((ancestor) => ancestor.title)
+                  .join(' › ')}
+              </span>
+            ) : null}
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+              {children.length} child task{children.length === 1 ? '' : 's'}
+              {progress ? (
+                <Badge variant={progress.done === progress.total ? 'success' : 'info'}>
+                  derived progress {progress.done}/{progress.total}
+                  {progress.failed ? ` · ${progress.failed} failed` : ''}
+                </Badge>
+              ) : null}
+            </span>
+            {children.length === 0 ? (
+              <span className="text-xs text-muted-foreground">
+                No task is grouped under this one.
+              </span>
+            ) : (
+              <ul className="flex list-none flex-col gap-1">
+                {children.map((child) => (
+                  <li key={child.id} className="flex min-w-0 items-center gap-1.5">
+                    <TaskStatusBadge status={child.status} />
+                    <Link
+                      to={`/tasks/${child.id}`}
+                      className="min-w-0 truncate text-xs hover:underline"
+                      title={child.title}
+                    >
+                      {child.title}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
       </CardContent>
     </Card>
   )

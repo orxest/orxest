@@ -25,12 +25,6 @@ func TestArchitectAgentDecomposition(t *testing.T) {
 
 	// Exactly the shape Codex is asked for through --output-schema.
 	plan := map[string]any{
-		"issue": map[string]any{
-			"title":               "JWT Authentication",
-			"description":         "Add JWT based authentication to the API.",
-			"priority":            2,
-			"acceptance_criteria": "Protected routes reject invalid tokens.",
-		},
 		"tasks": []any{
 			map[string]any{
 				"ref": "t1", "title": "Design authentication",
@@ -99,7 +93,7 @@ func TestArchitectAgentDecomposition(t *testing.T) {
 	drive(t, svc, "the decomposition task to propose a plan", func() bool {
 		return loadTask(t, svc, result.Task.ID).Status == domain.TaskReview
 	})
-	beforeApproval, err := svc.Tasks.List(ctx, repository.TaskFilter{IssueID: result.Issue.ID})
+	beforeApproval, err := svc.Tasks.List(ctx, repository.TaskFilter{ProjectID: result.Task.ProjectID})
 	if err != nil {
 		t.Fatalf("listing tasks: %v", err)
 	}
@@ -121,27 +115,21 @@ func TestArchitectAgentDecomposition(t *testing.T) {
 		t.Fatalf("expected the decomposition task to be done after approval, got %s", got.Status)
 	}
 
-	issue, err := svc.Issues.Get(ctx, result.Issue.ID)
-	if err != nil {
-		t.Fatalf("loading issue: %v", err)
-	}
-	if issue.Title != "JWT Authentication" {
-		t.Errorf("expected the architect to refine the issue title, got %q", issue.Title)
-	}
-	if issue.AcceptanceCriteria == "" {
-		t.Errorf("expected the architect's acceptance criteria to be applied")
-	}
-	if issue.Source != domain.SourceArchitect {
-		t.Errorf("expected the issue to be marked architect sourced, got %q", issue.Source)
-	}
-
-	tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{IssueID: issue.ID})
+	tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{ProjectID: result.Task.ProjectID})
 	if err != nil {
 		t.Fatalf("listing tasks: %v", err)
 	}
 	// The decomposition task plus the three generated work tasks.
 	if len(tasks) != 4 {
-		t.Fatalf("expected 4 tasks in the issue, got %d", len(tasks))
+		t.Fatalf("expected 4 tasks in the project, got %d", len(tasks))
+	}
+	for _, task := range tasks {
+		if task.Kind == domain.TaskKindDecomposition {
+			continue
+		}
+		if task.Source != domain.SourceArchitect {
+			t.Errorf("generated task %q must be architect sourced, got %q", task.Title, task.Source)
+		}
 	}
 	byTitle := map[string]domain.Task{}
 	for _, task := range tasks {
@@ -188,16 +176,13 @@ func TestArchitectPlanIsRejectedWhenInvalid(t *testing.T) {
 	repo := testsupport.Repository(t, "main")
 	cases := map[string]map[string]any{
 		"missing acceptance criteria": {
-			"issue": map[string]any{"title": "Issue", "description": "d"},
 			"tasks": []any{map[string]any{"ref": "t1", "title": "no criteria", "description": "d"}},
 		},
 		"unknown dependency ref": {
-			"issue": map[string]any{"title": "Issue", "description": "d"},
 			"tasks": []any{map[string]any{"ref": "t1", "title": "t", "description": "d",
 				"acceptance_criteria": "ac", "depends_on": []any{"nope"}}},
 		},
 		"no tasks at all": {
-			"issue": map[string]any{"title": "Issue", "description": "d"},
 			"tasks": []any{},
 		},
 	}
@@ -233,8 +218,8 @@ func TestArchitectPlanIsRejectedWhenInvalid(t *testing.T) {
 			if failed.LastError == "" {
 				t.Errorf("expected an explanatory error on the failed decomposition task")
 			}
-			// Nothing was persisted: the issue has only the decomposition task.
-			tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{IssueID: result.Issue.ID})
+			// Nothing was persisted: the project has only the decomposition task.
+			tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{ProjectID: result.Task.ProjectID})
 			if err != nil {
 				t.Fatalf("listing tasks: %v", err)
 			}
@@ -281,8 +266,11 @@ func TestDecompositionPromptAsksOnlyForThePlan(t *testing.T) {
 	if !strings.Contains(prompt, "## Required plan JSON") {
 		t.Error("a decomposition task must be asked for the plan JSON")
 	}
-	if !strings.Contains(prompt, "acceptance_criteria") || !strings.Contains(prompt, "\"issue\"") {
+	if !strings.Contains(prompt, "acceptance_criteria") || !strings.Contains(prompt, "\"parent_ref\"") {
 		t.Error("the plan schema must be included in the prompt, because not every harness can enforce it")
+	}
+	if strings.Contains(prompt, "\"issue\"") {
+		t.Error("the task-centric plan schema must not advertise an issue object")
 	}
 	if !strings.Contains(prompt, app.PlanFileRelativePath) {
 		t.Errorf("the prompt must tell the agent to also write %s", app.PlanFileRelativePath)
@@ -300,10 +288,6 @@ func TestArchitectPlanFallsBackToTheWorktreeFile(t *testing.T) {
 	repo := testsupport.Repository(t, "main")
 
 	plan := map[string]any{
-		"issue": map[string]any{
-			"title": "Flappy Bird", "description": "Build the game",
-			"acceptance_criteria": "The game runs in a browser.",
-		},
 		"tasks": []any{
 			map[string]any{
 				"ref": "t1", "title": "HTML shell", "description": "Canvas + script tags",
@@ -362,8 +346,11 @@ func TestArchitectPlanFallsBackToTheWorktreeFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading the draft: %v", err)
 	}
-	if draft.Issue.Title != "Flappy Bird" || len(draft.Tasks) != 2 {
+	if len(draft.Tasks) != 2 {
 		t.Fatalf("unexpected draft: %+v", draft)
+	}
+	if draft.Tasks[0].Title != "HTML shell" {
+		t.Errorf("unexpected first task %q", draft.Tasks[0].Title)
 	}
 	// The execution summary must be readable, not a blob of plan JSON.
 	execs, err := svc.Executions.List(ctx, repository.ExecutionFilter{TaskID: result.Task.ID})
@@ -383,7 +370,7 @@ func TestArchitectPlanFallsBackToTheWorktreeFile(t *testing.T) {
 	if _, err := svc.Engine.Approve(ctx, result.Task.ID); err != nil {
 		t.Fatalf("approving the recovered plan: %v", err)
 	}
-	tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{IssueID: result.Issue.ID})
+	tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{ProjectID: result.Task.ProjectID})
 	if err != nil {
 		t.Fatalf("listing tasks: %v", err)
 	}
@@ -401,13 +388,6 @@ func TestArchitectPlanFallsBackToTheWorktreeFile(t *testing.T) {
 	}
 	if generated != 2 {
 		t.Errorf("expected 2 generated work tasks, got %d", generated)
-	}
-	issue, err := svc.Issues.Get(ctx, result.Issue.ID)
-	if err != nil {
-		t.Fatalf("loading the issue: %v", err)
-	}
-	if issue.Title != "Flappy Bird" {
-		t.Errorf("expected the issue to take the plan title, got %q", issue.Title)
 	}
 }
 
@@ -448,7 +428,7 @@ func TestArchitectPlanRejectsInvalidWorktreeFile(t *testing.T) {
 	if !strings.Contains(failed.LastError, app.PlanFileRelativePath) {
 		t.Errorf("expected the error to name the plan file, got %q", failed.LastError)
 	}
-	if tasks := mustTasks(t, svc, result.Issue.ID); len(tasks) != 1 {
+	if tasks := mustTasks(t, svc, result.Task.ID); len(tasks) != 1 {
 		t.Errorf("expected no generated tasks, got %d", len(tasks))
 	}
 }
@@ -460,7 +440,9 @@ func TestArchitectPlanFoundBesideTheRepository(t *testing.T) {
 	ctx := context.Background()
 	repo := testsupport.Repository(t, "main")
 
-	// Shaped like real Pi output, not like the canonical schema.
+	// Shaped like real Pi output, not like the canonical schema. It still emits
+	// the pre-task-centric root `issue` object, which must be folded into notes
+	// rather than creating an entity.
 	plan := map[string]any{
 		"issue": map[string]any{
 			"title":       "create a flappy bird game in js",
@@ -535,12 +517,13 @@ func TestArchitectPlanFoundBesideTheRepository(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading the draft: %v", err)
 	}
-	if draft.Issue.Title != "create a flappy bird game in js" {
-		t.Errorf("unexpected issue title %q", draft.Issue.Title)
+	// The legacy root issue prose is preserved as planning notes, never as an
+	// entity, and the acceptance-criteria list is preserved on the leaf tasks.
+	if !strings.Contains(draft.Notes, "Collision detection") {
+		t.Errorf("expected the legacy issue prose to survive as notes, got %q", draft.Notes)
 	}
-	// A list of criteria becomes one readable string.
-	if !strings.Contains(draft.Issue.AcceptanceCriteria, "Collision detection") {
-		t.Errorf("expected the issue acceptance criteria to be preserved, got %q", draft.Issue.AcceptanceCriteria)
+	if !strings.Contains(draft.Notes, "flappy bird") {
+		t.Errorf("expected the legacy issue title to survive as notes, got %q", draft.Notes)
 	}
 	if len(draft.Tasks) != 2 {
 		t.Fatalf("expected 2 tasks, got %d", len(draft.Tasks))
@@ -558,7 +541,7 @@ func TestArchitectPlanFoundBesideTheRepository(t *testing.T) {
 	if _, err := svc.Engine.Approve(ctx, result.Task.ID); err != nil {
 		t.Fatalf("approving the recovered plan: %v", err)
 	}
-	tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{IssueID: result.Issue.ID})
+	tasks, err := svc.Tasks.List(ctx, repository.TaskFilter{ProjectID: result.Task.ProjectID})
 	if err != nil {
 		t.Fatalf("listing tasks: %v", err)
 	}

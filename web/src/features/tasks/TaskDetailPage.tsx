@@ -7,6 +7,7 @@ import {
   GitMerge,
   Wrench,
   Layers,
+  ListTree,
   OctagonAlert,
   Pencil,
   RotateCw,
@@ -17,7 +18,13 @@ import { Link, useParams } from 'react-router-dom'
 
 import { ApiError } from '@/api/client'
 import { IdChip } from '@/components/common/IdChip'
-import { FailureKindBadge, PriorityBadge, StatusDot, TaskStatusBadge } from '@/components/common/StatusBadge'
+import {
+  FailureKindBadge,
+  PriorityBadge,
+  StatusDot,
+  TaskKindBadge,
+  TaskStatusBadge,
+} from '@/components/common/StatusBadge'
 import { EmptyState } from '@/components/layout/EmptyState'
 import { ErrorAlert } from '@/components/layout/ErrorState'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -29,7 +36,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { TaskActionsMenu } from '@/features/board/TaskActionsMenu'
 import { ExecutionLogViewer } from '@/features/executions/ExecutionLogViewer'
 import { RawLogDialog } from '@/features/executions/RawLogDialog'
-import { PlanDraftReview } from '@/features/issues/PlanDraftReview'
+import { PlanDraftReview } from '@/features/tasks/PlanDraftReview'
 import { AgentSelectionCard } from '@/features/tasks/AgentSelectionCard'
 import { CurrentExecutionCard } from '@/features/tasks/CurrentExecutionCard'
 import { EditTaskDialog } from '@/features/tasks/EditTaskDialog'
@@ -151,14 +158,25 @@ export function TaskDetailPage() {
   const data = detail.data
   if (!data) return <NotFoundPanel taskId={taskId} />
 
-  const { task, project, issue, workflow, current_execution } = data
+  const { task, project, workflow, current_execution } = data
   // The API serialises empty slices as `null`, so normalise the collections
   // before handing them to the panels.
   const executions = data.executions ?? []
   const events = data.events ?? []
   const dependencies = data.dependencies ?? []
   const dependents = data.dependents ?? []
-  const detailData: TaskDetail = { ...data, executions, events, dependencies, dependents }
+  const ancestors = data.ancestors ?? []
+  const children = data.children ?? []
+  const parent = data.parent
+  const detailData: TaskDetail = {
+    ...data,
+    ancestors,
+    children,
+    executions,
+    events,
+    dependencies,
+    dependents,
+  }
 
   const maxAttempts = task.max_attempts > 0 ? String(task.max_attempts) : '∞'
   const workflowSteps = (workflow?.steps ?? []).map((step) => step.name)
@@ -190,7 +208,7 @@ export function TaskDetailPage() {
         <ChevronRight className="size-3 shrink-0" />
         {project ? (
           <Link
-            to={`/projects/${project.id}/board`}
+            to={`/projects/${project.id}/tasks`}
             className="max-w-[16rem] truncate hover:text-foreground hover:underline"
             title={project.name}
           >
@@ -199,20 +217,27 @@ export function TaskDetailPage() {
         ) : (
           <span className="font-mono">{shortId(task.project_id)}</span>
         )}
+        {ancestors.length > 0 ? (
+          <>
+            <ChevronRight className="size-3 shrink-0" />
+            <span className="flex min-w-0 flex-wrap items-center gap-1">
+              {ancestors.map((ancestor) => (
+                <span key={ancestor.id} className="flex min-w-0 items-center gap-1">
+                  <Link
+                    to={`/tasks/${ancestor.id}`}
+                    className="max-w-[16rem] truncate hover:text-foreground hover:underline"
+                    title={ancestor.title}
+                  >
+                    {ancestor.title}
+                  </Link>
+                  <ChevronRight className="size-3 shrink-0" />
+                </span>
+              ))}
+            </span>
+          </>
+        ) : null}
         <ChevronRight className="size-3 shrink-0" />
-        {issue ? (
-          <Link
-            to={`/projects/${task.project_id}/issues`}
-            className="max-w-[20rem] truncate hover:text-foreground hover:underline"
-            title={issue.title}
-          >
-            {truncate(issue.title, 80)}
-          </Link>
-        ) : (
-          <span className="font-mono">issue {shortId(task.issue_id)}</span>
-        )}
-        <ChevronRight className="size-3 shrink-0" />
-        <span className="text-foreground">task {shortId(task.id)}</span>
+        <span className="text-foreground">{truncate(task.title, 80)}</span>
       </nav>
 
       <PageHeader
@@ -221,7 +246,10 @@ export function TaskDetailPage() {
           <>
             <TaskStatusBadge status={task.status} />
             <PriorityBadge priority={task.priority} />
-            <Badge variant={task.kind === 'decomposition' ? 'purple' : 'outline'}>{task.kind}</Badge>
+            <TaskKindBadge kind={task.kind} />
+            <Badge variant={task.source === 'architect' ? 'purple' : 'muted'}>
+              {task.source === 'architect' ? 'architect' : 'manual'}
+            </Badge>
             <span className="text-[11px] text-muted-foreground">
               attempts{' '}
               <span className="font-mono text-foreground">
@@ -232,9 +260,27 @@ export function TaskDetailPage() {
               order <span className="font-mono text-foreground">{task.order_index}</span>
             </span>
             <IdChip value={task.id} label={`task:${shortId(task.id)}`} />
-            <IdChip value={task.issue_id} label={`issue:${shortId(task.issue_id)}`} />
             <IdChip value={task.project_id} label={`project:${shortId(task.project_id)}`} />
             <IdChip value={task.workflow_id} label={`workflow:${shortId(task.workflow_id)}`} />
+            {parent ? (
+              <Link
+                to={`/tasks/${parent.id}`}
+                className="inline-flex max-w-[18rem] items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground hover:underline"
+                title={`Part of the container “${parent.title}”`}
+              >
+                <ListTree className="size-3 shrink-0" />
+                <span className="truncate">{parent.title}</span>
+              </Link>
+            ) : null}
+            {children.length > 0 ? (
+              <Badge variant="purple" title="Tasks grouped under this container">
+                <ListTree className="size-3" />
+                {children.length} child task{children.length === 1 ? '' : 's'}
+                {data.progress?.progress
+                  ? ` · ${data.progress.progress.done}/${data.progress.progress.total} done`
+                  : ''}
+              </Badge>
+            ) : null}
           </>
         }
         actions={
@@ -320,7 +366,7 @@ export function TaskDetailPage() {
             </AlertTitle>
             <AlertDescription>
               {planDraft ? (
-                'The architect finished planning. Approve the draft plan to persist the issue’s tasks, or reject it with a reason so the architect tries again.'
+                'The architect finished planning. Approve the draft plan to create its tasks, or reject it with a reason so the architect tries again.'
               ) : (
                 <>
                   This task reached{' '}
@@ -385,7 +431,7 @@ export function TaskDetailPage() {
                   Draft plan awaiting approval
                 </CardTitle>
                 <CardDescription>
-                  The architect proposed this plan for the issue. Approve it to persist the tasks, or
+                  The architect proposed this plan. Approve it to create the tasks, or
                   reject it with a reason to send it back.
                 </CardDescription>
               </CardHeader>

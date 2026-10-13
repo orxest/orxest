@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useTaskActions } from '@/hooks/mutations'
-import { taskActions } from '@/lib/status'
+import { taskActions, taskKindCapabilities } from '@/lib/status'
 import { cn } from '@/lib/utils'
 import { MoveTaskDialog } from '@/features/board/MoveTaskDialog'
 import { ReassignDialog } from '@/features/board/ReassignDialog'
@@ -58,11 +58,21 @@ export function TaskActionsMenu({
   const [reassignOpen, setReassignOpen] = React.useState(false)
   const [rejectOpen, setRejectOpen] = React.useState(false)
 
-  const allowed = taskActions(task.status, task.failure_kind)
+  const allowed = taskActions(task.status, task.failure_kind, task.kind)
+  const capabilities = taskKindCapabilities(task.kind)
   const busy = actions.isBusy(task.id)
 
   return (
     <div className={cn('flex items-center gap-1', className)}>
+      {task.kind === 'container' ? (
+        <span
+          className="text-[11px] text-muted-foreground"
+          title="A container groups tasks and is never executed: move, start and retry do not apply to it. Its progress is derived from its children."
+        >
+          container
+        </span>
+      ) : null}
+
       {showReviewActions && allowed.canApprove ? (
         <>
           <Button
@@ -146,13 +156,15 @@ export function TaskActionsMenu({
             <UserCog />
             Reassign agent…
           </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={workflowSteps.length === 0 || busy}
-            onSelect={() => setMoveOpen(true)}
-          >
-            <MoveRight />
-            Move status / step…
-          </DropdownMenuItem>
+          {capabilities.boardWork ? (
+            <DropdownMenuItem
+              disabled={workflowSteps.length === 0 || busy}
+              onSelect={() => setMoveOpen(true)}
+            >
+              <MoveRight />
+              Move status / step…
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             disabled={!allowed.canCancel || busy}

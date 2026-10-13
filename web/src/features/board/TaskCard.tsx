@@ -60,10 +60,11 @@ function attemptsLabel(task: Task): string {
 
 /**
  * Dense kanban card. Owns no data fetching: the board query is passed down so
- * issues, agents and workflow are read without extra requests.
+ * containers, agents and workflow are read without extra requests.
  *
  * The card is draggable between board columns when the board supplies drag
  * handlers; the action menu stays the accessible path to the same transitions.
+ * A `container` never appears in a column, so it is never dragged here.
  */
 export function TaskCard({
   task,
@@ -86,9 +87,13 @@ export function TaskCard({
   const navigate = useNavigate()
   const draggable = Boolean(onDragStart) && !busy
 
-  const issueTitle = React.useMemo(
-    () => board.issues.find((issue) => issue.id === task.issue_id)?.title,
-    [board.issues, task.issue_id],
+  // Title of the container this task belongs to, when it has one.
+  const parentTitle = React.useMemo(
+    () =>
+      task.parent_task_id
+        ? board.containers.find((container) => container.task.id === task.parent_task_id)?.task.title
+        : undefined,
+    [board.containers, task.parent_task_id],
   )
 
   const workflow = board.workflow
@@ -183,10 +188,9 @@ export function TaskCard({
 
       <div className="flex flex-wrap items-center gap-1">
         <TaskStatusBadge status={task.status} />
-        {task.kind === 'decomposition' ? (
-          <Badge variant="purple" title="Architect decomposition task">
-            <Layers className="size-3" />
-            decomposition
+        {task.source === 'architect' ? (
+          <Badge variant="purple" title="Proposed by the architect">
+            architect
           </Badge>
         ) : null}
         <FailureKindBadge kind={task.failure_kind} />
@@ -204,9 +208,13 @@ export function TaskCard({
         ) : null}
       </div>
 
-      {issueTitle ? (
-        <p className="truncate text-[11px] text-muted-foreground" title={issueTitle}>
-          {issueTitle}
+      {parentTitle ? (
+        <p
+          className="flex min-w-0 items-center gap-1 truncate text-[11px] text-muted-foreground"
+          title={`Part of the container “${parentTitle}”`}
+        >
+          <Layers className="size-3 shrink-0" />
+          <span className="truncate">{parentTitle}</span>
         </p>
       ) : null}
 

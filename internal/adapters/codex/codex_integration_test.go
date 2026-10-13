@@ -61,7 +61,7 @@ func TestCodexSmokeAgainstTheRealCLI(t *testing.T) {
 		ExecutionID: "exe_smoke",
 		Project:     domain.Project{Name: "smoke", RepositoryPath: worktree, TargetBranch: "main"},
 		Task: domain.Task{
-			ID: "tsk_smoke", ProjectID: "prj_smoke", IssueID: "iss_smoke",
+			ID: "tsk_smoke", ProjectID: "prj_smoke",
 			Title: "Smoke test", Description: "Do not modify any file.",
 			AcceptanceCriteria: "Report success without changing the repository.",
 			Status:             domain.TaskRunning, Kind: domain.TaskKindWork,

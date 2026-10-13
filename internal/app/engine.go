@@ -18,13 +18,12 @@ type Engine struct {
 	tasks      *TaskService
 	executions *ExecutionService
 	scheduler  *Scheduler
-	issues     *IssueService
 	planner    *Planner
 }
 
 // NewEngine creates the workflow engine.
-func NewEngine(deps Deps, tasks *TaskService, executions *ExecutionService, scheduler *Scheduler, issues *IssueService) *Engine {
-	return &Engine{deps: deps, tasks: tasks, executions: executions, scheduler: scheduler, issues: issues}
+func NewEngine(deps Deps, tasks *TaskService, executions *ExecutionService, scheduler *Scheduler) *Engine {
+	return &Engine{deps: deps, tasks: tasks, executions: executions, scheduler: scheduler}
 }
 
 // SetPlanner wires the architect plan persistence hook. It is a setter because
@@ -129,7 +128,6 @@ func (e *Engine) advanceWithBudget(
 		}
 		e.deps.publish(ctx, domain.Event{
 			ProjectID:   task.ProjectID,
-			IssueID:     task.IssueID,
 			TaskID:      task.ID,
 			ExecutionID: exec.ID,
 			Type:        domain.EventTaskFailed,
@@ -170,7 +168,6 @@ func (e *Engine) toReview(ctx context.Context, task *domain.Task, exec *domain.E
 	}
 	e.deps.publish(ctx, domain.Event{
 		ProjectID:   task.ProjectID,
-		IssueID:     task.IssueID,
 		TaskID:      task.ID,
 		ExecutionID: exec.ID,
 		Type:        domain.EventTaskReview,
@@ -206,7 +203,6 @@ func (e *Engine) applyTarget(
 			message = fmt.Sprintf("rework: %s sent the task back to step %q", step.Name, target.StepName)
 			e.deps.publish(ctx, domain.Event{
 				ProjectID:   task.ProjectID,
-				IssueID:     task.IssueID,
 				TaskID:      task.ID,
 				ExecutionID: exec.ID,
 				Type:        domain.EventTaskRework,
@@ -302,7 +298,6 @@ func (e *Engine) awaitIntegration(ctx context.Context, task *domain.Task, workfl
 	}
 	e.deps.publish(ctx, domain.Event{
 		ProjectID:   task.ProjectID,
-		IssueID:     task.IssueID,
 		TaskID:      task.ID,
 		ExecutionID: execID(exec),
 		Type:        domain.EventTaskProgress,
@@ -335,7 +330,6 @@ func (e *Engine) markDone(ctx context.Context, task *domain.Task, workflow *doma
 	}
 	e.deps.publish(ctx, domain.Event{
 		ProjectID:   task.ProjectID,
-		IssueID:     task.IssueID,
 		TaskID:      task.ID,
 		ExecutionID: execID(exec),
 		Type:        domain.EventTaskCompleted,
@@ -439,7 +433,6 @@ func (e *Engine) publishIntegrationWarnings(ctx context.Context, task *domain.Ta
 		e.deps.logger().WarnContext(ctx, "integration warning", "task_id", task.ID, "warning", warning)
 		e.deps.publish(ctx, domain.Event{
 			ProjectID:   task.ProjectID,
-			IssueID:     task.IssueID,
 			TaskID:      task.ID,
 			ExecutionID: execID(exec),
 			Type:        domain.EventTaskProgress,
@@ -520,7 +513,6 @@ func (e *Engine) handleIntegrationConflict(
 		target, task.ConflictAttempts, limit)
 	e.deps.publish(ctx, domain.Event{
 		ProjectID: task.ProjectID,
-		IssueID:   task.IssueID,
 		TaskID:    task.ID,
 		Type:      domain.EventTaskRework,
 		Message:   message,
@@ -552,7 +544,6 @@ func (e *Engine) escalateConflict(
 	}
 	e.deps.publish(ctx, domain.Event{
 		ProjectID: task.ProjectID,
-		IssueID:   task.IssueID,
 		TaskID:    task.ID,
 		Type:      domain.EventTaskBlocked,
 		Message:   "integration conflict escalated to a human",
@@ -684,7 +675,6 @@ func (e *Engine) cleanupWorktree(ctx context.Context, project *domain.Project, t
 		if status, err := e.deps.Git.WorktreeStatus(ctx, task.WorkspacePath); err == nil && !status.Clean {
 			e.deps.publish(ctx, domain.Event{
 				ProjectID: task.ProjectID,
-				IssueID:   task.IssueID,
 				TaskID:    task.ID,
 				Type:      domain.EventTaskProgress,
 				Message:   "discarding uncommitted changes in the task worktree (require_clean_worktree is disabled)",
@@ -719,18 +709,50 @@ func (e *Engine) fail(ctx context.Context, task *domain.Task, exec *domain.Execu
 	if err := e.tasks.SetStatus(ctx, task, domain.TaskFailed, statusOptions{failureKind: kind, error: reason}); err != nil {
 		return err
 	}
-	if err := e.issues.RecomputeStatus(ctx, task.IssueID); err != nil {
-		e.deps.logger().WarnContext(ctx, "recomputing issue status failed", "error", err.Error())
-	}
-	return nil
+	return e.refreshParents(ctx, task)
 }
 
 func (e *Engine) block(ctx context.Context, task *domain.Task, reason string, kind domain.FailureKind) error {
 	if err := e.tasks.SetStatus(ctx, task, domain.TaskBlocked, statusOptions{blockedReason: reason, failureKind: kind}); err != nil {
 		return err
 	}
-	if err := e.issues.RecomputeStatus(ctx, task.IssueID); err != nil {
-		e.deps.logger().WarnContext(ctx, "recomputing issue status failed", "error", err.Error())
+	return e.refreshParents(ctx, task)
+}
+
+// refreshParents publishes the derived progress of the containers above a task
+// and wakes the scheduler. Container progress is never persisted: the container
+// read model is recomputed from its descendants on every read, which is what
+// keeps the leaf-task state machine authoritative.
+func (e *Engine) refreshParents(ctx context.Context, task *domain.Task) error {
+	if task == nil || task.ParentTaskID == "" {
+		return nil
+	}
+	ancestors, err := e.deps.Store.Tasks().Ancestors(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	for i := range ancestors {
+		parent := ancestors[i]
+		progress, err := e.deps.Store.Tasks().Progress(ctx, parent.ID)
+		if err != nil {
+			continue
+		}
+		e.deps.publish(ctx, domain.Event{
+			ProjectID: parent.ProjectID,
+			TaskID:    parent.ID,
+			Type:      domain.EventTaskProgress,
+			Message:   fmt.Sprintf("%s: %d/%d work task(s) complete", parent.Title, progress.Done, progress.Total),
+			Payload: map[string]any{
+				"parent_task_id": parent.ID,
+				"child_task_id":  task.ID,
+				"total":          progress.Total,
+				"done":           progress.Done,
+				"failed":         progress.Failed,
+				"cancelled":      progress.Cancelled,
+				"status":         string(progress.Progress.Status),
+			},
+			CreatedAt: e.deps.now(),
+		})
 	}
 	return nil
 }
@@ -750,8 +772,8 @@ func (e *Engine) blockWithExecution(ctx context.Context, task *domain.Task, exec
 
 // afterTransition recomputes derived state and wakes the scheduler.
 func (e *Engine) afterTransition(ctx context.Context, task *domain.Task, workflow *domain.Workflow, step domain.WorkflowStep, message string) error {
-	if err := e.issues.RecomputeStatus(ctx, task.IssueID); err != nil {
-		e.deps.logger().WarnContext(ctx, "recomputing issue status failed", "error", err.Error())
+	if err := e.refreshParents(ctx, task); err != nil {
+		e.deps.logger().WarnContext(ctx, "refreshing container progress failed", "error", err.Error())
 	}
 	e.scheduler.Trigger()
 	return nil
@@ -783,7 +805,6 @@ func (e *Engine) finishDecomposition(ctx context.Context, task *domain.Task, wor
 			"task_id", task.ID, "source", source)
 		e.deps.publish(ctx, domain.Event{
 			ProjectID:   task.ProjectID,
-			IssueID:     task.IssueID,
 			TaskID:      task.ID,
 			ExecutionID: exec.ID,
 			Type:        domain.EventTaskProgress,
@@ -809,7 +830,6 @@ func (e *Engine) finishDecomposition(ctx context.Context, task *domain.Task, wor
 		}
 		e.deps.publish(ctx, domain.Event{
 			ProjectID:   task.ProjectID,
-			IssueID:     task.IssueID,
 			TaskID:      task.ID,
 			ExecutionID: exec.ID,
 			Type:        domain.EventTaskReview,
@@ -829,10 +849,9 @@ func (e *Engine) finishDecomposition(ctx context.Context, task *domain.Task, wor
 		return e.fail(ctx, task, exec, "persisting architect plan failed: "+err.Error())
 	}
 	e.deps.logger().InfoContext(ctx, "architect plan persisted",
-		"task_id", task.ID, "issue_id", task.IssueID, "tasks_created", len(created))
+		"task_id", task.ID, "tasks_created", len(created))
 	e.deps.publish(ctx, domain.Event{
 		ProjectID:   task.ProjectID,
-		IssueID:     task.IssueID,
 		TaskID:      task.ID,
 		ExecutionID: exec.ID,
 		Type:        domain.EventTaskProgress,
@@ -880,7 +899,6 @@ func (e *Engine) approvePlan(ctx context.Context, task *domain.Task, override *d
 	}
 	e.deps.publish(ctx, domain.Event{
 		ProjectID: task.ProjectID,
-		IssueID:   task.IssueID,
 		TaskID:    task.ID,
 		Type:      domain.EventTaskProgress,
 		Message:   fmt.Sprintf("plan approved: %d task(s) created", len(created)),
@@ -933,7 +951,6 @@ func (e *Engine) ApprovePlan(ctx context.Context, taskID string, plan *domain.Ar
 	}
 	e.deps.publish(ctx, domain.Event{
 		ProjectID: task.ProjectID,
-		IssueID:   task.IssueID,
 		TaskID:    task.ID,
 		Type:      domain.EventTaskProgress,
 		Message:   "approved by operator at step " + step.Name,
@@ -967,7 +984,6 @@ func (e *Engine) Reject(ctx context.Context, taskID, reason string) (*domain.Tas
 	if task.Kind == domain.TaskKindDecomposition {
 		e.deps.publish(ctx, domain.Event{
 			ProjectID: task.ProjectID,
-			IssueID:   task.IssueID,
 			TaskID:    task.ID,
 			Type:      domain.EventTaskRework,
 			Message:   "plan rejected by operator: " + reason,
@@ -1011,7 +1027,6 @@ func (e *Engine) Reject(ctx context.Context, taskID, reason string) (*domain.Tas
 	}
 	e.deps.publish(ctx, domain.Event{
 		ProjectID: task.ProjectID,
-		IssueID:   task.IssueID,
 		TaskID:    task.ID,
 		Type:      domain.EventTaskRework,
 		Message:   "rejected by operator at step " + step.Name + ": " + synthetic.Summary,

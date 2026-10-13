@@ -66,8 +66,8 @@ func TestDecisionProviderOnlyRecommends(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	first := newIssueAndTask(t, svc, &project.Project, "First task", nil)
-	_ = newIssueAndTask(t, svc, &project.Project, "Second task", nil)
+	first := newProjectTask(t, svc, &project.Project, "First task", nil)
+	_ = newProjectTask(t, svc, &project.Project, "Second task", nil)
 
 	// The task must still complete even though the recommendation is invalid.
 	drive(t, svc, "the task to finish despite an invalid recommendation", func() bool {
@@ -125,7 +125,7 @@ func TestDisabledDecisionProviderIsNeverConsulted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Do the work", nil)
+	task := newProjectTask(t, svc, &project.Project, "Do the work", nil)
 	drive(t, svc, "the task to finish", func() bool {
 		return loadTask(t, svc, task.ID).Status == domain.TaskDone
 	})

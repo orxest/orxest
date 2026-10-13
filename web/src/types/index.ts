@@ -2,6 +2,10 @@
  * Hand-written domain types mirroring the Orxest Go domain models
  * (`internal/domain/*.go`). Field names are the exact JSON names returned by
  * `/api`, so these types can be used directly on API responses.
+ *
+ * There is exactly one user-visible work-item entity: `Task`. A task belongs
+ * directly to a project; `kind` says how Orxest treats it (executable `work`, a
+ * structural `container`, or an internal `decomposition` planning record).
  */
 
 export type TaskStatus =
@@ -16,7 +20,16 @@ export type TaskStatus =
   | 'done'
   | 'cancelled'
 
-export type TaskKind = 'work' | 'decomposition'
+/**
+ * `work` — ordinary executable work, the only kind that is dispatched.
+ * `container` — a structural parent representing a broader outcome; never
+ *   executable and never moved on the board.
+ * `decomposition` — an internal architect planning record, not a work item.
+ */
+export type TaskKind = 'work' | 'container' | 'decomposition'
+
+/** Where a task came from. Metadata only; it never changes scheduling. */
+export type TaskSource = 'manual' | 'architect'
 
 export type FailureKind =
   | ''
@@ -29,8 +42,6 @@ export type FailureKind =
   | 'dependency_incomplete'
   | 'agent_blocked'
   | 'timeout'
-
-export type IssueStatus = 'open' | 'in_progress' | 'done' | 'cancelled'
 
 export type ExecutionStatus =
   | 'pending'
@@ -93,31 +104,24 @@ export interface PauseResult {
   cancelled_count: number
 }
 
-export interface Issue {
-  id: string
-  project_id: string
-  title: string
-  description: string
-  priority: number
-  status: IssueStatus
-  labels: string[] | null
-  acceptance_criteria: string
-  source: string
-  created_at: string
-  updated_at: string
-}
-
+/**
+ * Task is the smallest independently executable unit of work and the single
+ * user-facing work item of a project.
+ */
 export interface Task {
   id: string
   project_id: string
-  issue_id: string
+  /** Optional structural parent. Empty for a top-level task. */
+  parent_task_id?: string
   title: string
   description: string
   priority: number
   status: TaskStatus
   acceptance_criteria: string
+  /** Optional classification such as `bug` or `documentation`. Never required. */
   labels: string[] | null
   kind: TaskKind
+  source: TaskSource | string
   workflow_id: string
   current_workflow_step: string
   attempt_count: number
@@ -143,7 +147,6 @@ export interface Execution {
   id: string
   project_id: string
   task_id: string
-  issue_id: string
   agent_id: string
   agent_name: string
   role_id: string
@@ -192,7 +195,6 @@ export interface ExecutionEvent {
 export interface OrxestEvent {
   id: string
   project_id?: string
-  issue_id?: string
   task_id?: string
   execution_id?: string
   type: string
@@ -280,11 +282,17 @@ export interface WorkflowTemplate {
   steps: WorkflowStep[]
 }
 
+/**
+ * Project dashboard counters. Executable work is counted on its own; structural
+ * containers and internal planning records are reported separately because
+ * neither is project work.
+ */
 export interface ProjectStats {
-  issues: number
+  /** Executable (`work`) tasks. */
   tasks: number
   task_status: Record<string, number>
-  issue_status: Record<string, number>
+  containers: number
+  planning_jobs: number
   running_executions: number
 }
 
@@ -295,11 +303,42 @@ export interface BoardColumn {
   tasks: Task[]
 }
 
+/** Derived, read-only progress of the executable work below a container. */
+export interface DescendantProgress {
+  total: number
+  done: number
+  failed: number
+  cancelled: number
+  /** Work that is neither done, failed nor cancelled. */
+  executable: number
+  /** Derived display status; never persisted onto the container. */
+  status: TaskStatus
+}
+
+export interface TaskProgress {
+  task_id: string
+  total: number
+  done: number
+  failed: number
+  cancelled: number
+  progress: DescendantProgress
+}
+
+/** A container task plus the derived progress of its children. */
+export interface ContainerView {
+  task: Task
+  children: Task[]
+  progress: TaskProgress
+}
+
 export interface BoardResponse {
   project: Project
   workflow?: Workflow
+  /** Only `work` tasks; containers are reported separately. */
   columns: BoardColumn[]
-  issues: Issue[]
+  containers: ContainerView[]
+  /** Internal architect planning records. Never counted as project work. */
+  planning_jobs: Task[]
   stats: ProjectStats
   dependencies: Record<string, string[]>
   agents: ProjectAgentView[]
@@ -327,8 +366,14 @@ export interface RetryFailedResult {
 
 export interface TaskDetail {
   task: Task
-  issue?: Issue
   project?: Project
+  /** The container this task belongs to, when it has one. */
+  parent?: Task
+  /** Root-first chain of containers above this task. */
+  ancestors: Task[]
+  children: Task[]
+  /** Present when the task has children; derived, never persisted. */
+  progress?: TaskProgress
   workflow?: Workflow
   current_step?: WorkflowStep
   current_role?: Role
@@ -424,35 +469,45 @@ export interface ExecutionLog {
   content?: string
 }
 
+/**
+ * Result of `POST /api/projects/{id}/decompose`. In `architect` mode a planning
+ * task is queued and `created_tasks` is empty; in `direct` mode a supplied plan
+ * was validated and persisted immediately.
+ */
 export interface DecomposeResult {
-  issue: Issue
   decomposition_task?: Task
   created_tasks?: Task[]
   workflow?: Workflow
   mode: 'architect' | 'direct'
+  notes?: string
 }
 
-export interface ArchitectPlanTask {
+/**
+ * One task an architect proposes. IDs do not exist yet, so dependencies and the
+ * optional parent relationship are expressed through plan-local `ref` keys.
+ */
+export interface ArchitectTask {
   ref: string
   title: string
   description: string
   acceptance_criteria: string
+  /** Sibling refs that must complete first. Never inferred from hierarchy. */
   depends_on?: string[]
+  /** Optional sibling ref whose broader outcome this task decomposes. */
+  parent_ref?: string
   priority?: number
   labels?: string[]
-  estimated_complexity?: string
+  estimated_complexity?: 'low' | 'medium' | 'high'
   order_index?: number
 }
 
+/**
+ * The structured result of an architect execution. There is no root entity
+ * concept: every entry is itself a user-visible task, and the original intent
+ * survives as planning context in `notes`.
+ */
 export interface ArchitectPlan {
-  issue: {
-    title: string
-    description: string
-    priority?: number
-    labels?: string[]
-    acceptance_criteria?: string
-  }
-  tasks: ArchitectPlanTask[]
+  tasks: ArchitectTask[]
   notes?: string
 }
 

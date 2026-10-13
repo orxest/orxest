@@ -12,8 +12,6 @@ export const PROJECT_STREAM_EVENTS: readonly string[] = [
   'project.updated',
   'project.paused',
   'project.resumed',
-  'issue.created',
-  'issue.updated',
   'task.created',
   'task.updated',
   'task.ready',

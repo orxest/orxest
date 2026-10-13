@@ -8,11 +8,15 @@ import (
 	"github.com/orxest/orxest/internal/domain/repository"
 )
 
-// taskDetail is the read model of the task view (spec §30).
+// taskDetail is the read model of the task view (spec §30). It is task-first:
+// there is no issue to resolve or embed.
 type taskDetail struct {
 	Task         domain.Task                       `json:"task"`
-	Issue        *domain.Issue                     `json:"issue,omitempty"`
 	Project      *domain.Project                   `json:"project,omitempty"`
+	Parent       *domain.Task                      `json:"parent,omitempty"`
+	Ancestors    []domain.Task                     `json:"ancestors"`
+	Children     []domain.Task                     `json:"children"`
+	Progress     *repository.TaskProgress          `json:"progress,omitempty"`
 	Workflow     *domain.Workflow                  `json:"workflow,omitempty"`
 	Step         *domain.WorkflowStep              `json:"current_step,omitempty"`
 	Role         *domain.Role                      `json:"current_role,omitempty"`
@@ -47,9 +51,28 @@ func (s *Server) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	detail := taskDetail{Task: *task, Executions: []domain.Execution{}, Events: []domain.Event{}}
-	if issue, err := s.svc.Issues.Get(ctx, task.IssueID); err == nil {
-		detail.Issue = issue
+	detail := taskDetail{
+		Task:       *task,
+		Ancestors:  []domain.Task{},
+		Children:   []domain.Task{},
+		Executions: []domain.Execution{},
+		Events:     []domain.Event{},
+	}
+	if task.ParentTaskID != "" {
+		if parent, err := s.svc.Tasks.Get(ctx, task.ParentTaskID); err == nil {
+			detail.Parent = parent
+		}
+	}
+	if ancestors, err := s.svc.Tasks.Ancestors(ctx, id); err == nil && len(ancestors) > 0 {
+		detail.Ancestors = ancestors
+	}
+	if children, err := s.svc.Tasks.Children(ctx, id); err == nil && len(children) > 0 {
+		detail.Children = children
+		// A container's progress is derived from its descendants and is never an
+		// independently executed workflow transition.
+		if progress, err := s.svc.Tasks.Progress(ctx, id); err == nil {
+			detail.Progress = &progress
+		}
 	}
 	if project, err := s.svc.Projects.Get(ctx, task.ProjectID); err == nil {
 		detail.Project = project
@@ -83,7 +106,8 @@ func (s *Server) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// A decomposition task waiting for approval exposes its draft plan so the UI
-	// can render the issue/tasks/dependency graph before anything is scheduled.
+	// can render the proposed tasks, hierarchy and dependencies before anything
+	// is scheduled.
 	if task.Kind == domain.TaskKindDecomposition && task.Status == domain.TaskReview {
 		if plan, err := s.svc.Planner.DraftPlan(ctx, task); err == nil {
 			detail.PlanDraft = plan

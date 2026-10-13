@@ -253,28 +253,34 @@ func TestProjectWorkflowThroughTheHTTPAPI(t *testing.T) {
 	}
 	projectID := bundle.Project.ID
 
-	// 2. Create an issue and two tasks, the second depending on the first.
-	var issue domain.Issue
-	env.expect("POST", "/api/projects/"+projectID+"/issues", map[string]any{
-		"title":       "JWT Authentication",
-		"description": "Add JWT authentication to the API.",
-		"priority":    2,
-	}, http.StatusCreated, &issue)
-
+	// 2. Create two tasks directly in the project, the second depending on the
+	//    first. No issue and no parent are required.
 	var first domain.Task
-	env.expect("POST", "/api/issues/"+issue.ID+"/tasks", map[string]any{
+	env.expect("POST", "/api/projects/"+projectID+"/tasks", map[string]any{
 		"title":               "Implement user model",
 		"description":         "Add the user model",
 		"acceptance_criteria": "Users can be created and loaded",
+		"labels":              []string{"feature"},
 	}, http.StatusCreated, &first)
 
 	var second domain.Task
-	env.expect("POST", "/api/issues/"+issue.ID+"/tasks", map[string]any{
+	env.expect("POST", "/api/projects/"+projectID+"/tasks", map[string]any{
 		"title":               "Implement authentication API",
 		"description":         "Add the authentication endpoints",
 		"acceptance_criteria": "Login returns a JWT",
 		"depends_on":          []string{first.ID},
 	}, http.StatusCreated, &second)
+	if first.ProjectID != projectID || first.ParentTaskID != "" {
+		t.Errorf("a manual task must belong directly to the project, got %+v", first)
+	}
+	if first.Source != domain.SourceManual || first.Kind != domain.TaskKindWork {
+		t.Errorf("unexpected task defaults: source=%q kind=%q", first.Source, first.Kind)
+	}
+	var fetched domain.Task
+	env.expect("GET", "/api/tasks/"+first.ID, nil, http.StatusOK, &fetched)
+	if fetched.ID != first.ID {
+		t.Fatalf("the task is not readable over the API: %+v", fetched)
+	}
 
 	// The dependency is exposed and a cycle is refused.
 	graph := decode[struct {
@@ -304,16 +310,22 @@ func TestProjectWorkflowThroughTheHTTPAPI(t *testing.T) {
 			Tasks []domain.Task `json:"tasks"`
 		} `json:"columns"`
 		Stats struct {
-			Tasks      int            `json:"tasks"`
-			TaskStatus map[string]int `json:"task_status"`
+			Tasks        int            `json:"tasks"`
+			TaskStatus   map[string]int `json:"task_status"`
+			Containers   int            `json:"containers"`
+			PlanningJobs int            `json:"planning_jobs"`
 		} `json:"stats"`
 		Dependencies map[string][]string       `json:"dependencies"`
 		Agents       []domain.ProjectAgentView `json:"agents"`
-		Issues       []domain.Issue            `json:"issues"`
+		PlanningJobs []domain.Task             `json:"planning_jobs"`
+		Containers   []json.RawMessage         `json:"containers"`
 	}
 	env.expect("GET", "/api/projects/"+projectID+"/board", nil, http.StatusOK, &board)
-	if board.Stats.Tasks != 2 || len(board.Issues) != 1 {
+	if board.Stats.Tasks != 2 || board.Stats.Containers != 0 || board.Stats.PlanningJobs != 0 {
 		t.Errorf("unexpected board statistics %+v", board.Stats)
+	}
+	if len(board.Containers) != 0 || len(board.PlanningJobs) != 0 {
+		t.Errorf("a flat project must report no containers and no planning jobs: %+v", board)
 	}
 	foundReview := false
 	for _, column := range board.Columns {
@@ -378,12 +390,15 @@ func TestProjectWorkflowThroughTheHTTPAPI(t *testing.T) {
 		return env.task(second.ID).Status == domain.TaskReview
 	})
 
-	// 9. The issue is closed once all tasks are done.
+	// 9. Completing every task leaves the project idle, not closed: more work can
+	//    still be added without reopening anything.
 	env.expect("POST", "/api/tasks/"+second.ID+"/approve", nil, http.StatusOK, nil)
-	var issueAfter domain.Issue
-	env.expect("GET", "/api/issues/"+issue.ID, nil, http.StatusOK, &issueAfter)
-	if issueAfter.Status != domain.IssueStatusDone {
-		t.Errorf("expected the issue to be done, got %s", issueAfter.Status)
+	var third domain.Task
+	env.expect("POST", "/api/projects/"+projectID+"/tasks", map[string]any{
+		"title": "Add refresh tokens",
+	}, http.StatusCreated, &third)
+	if third.Status != domain.TaskBacklog {
+		t.Errorf("expected a new backlog task after the project went idle, got %s", third.Status)
 	}
 
 	// 10. Executions are preserved and never overwritten.
@@ -598,5 +613,222 @@ func TestBasePathPrefixesTheAPI(t *testing.T) {
 	defer resp2.Body.Close()
 	if resp2.StatusCode == http.StatusOK {
 		t.Errorf("expected the unprefixed API to be unavailable when a base path is configured")
+	}
+}
+
+// TestBoardAndTaskDetailAreTaskFirst covers the API contract of the
+// task-centric model: the board separates work, containers and internal
+// planning jobs, and the task detail has no issue to resolve.
+func TestBoardAndTaskDetailAreTaskFirst(t *testing.T) {
+	env := newEnv(t, fake.New())
+	var bundle struct {
+		Project  domain.Project  `json:"project"`
+		Workflow domain.Workflow `json:"workflow"`
+	}
+	env.expect("POST", "/api/projects", map[string]any{
+		"name":              "Task first",
+		"repository_path":   env.repo,
+		"target_branch":     "main",
+		"workflow_template": "minimal",
+		"agents":            []map[string]any{{"name": "dev", "harness": "fake", "role": "developer"}},
+	}, http.StatusCreated, &bundle)
+	projectID := bundle.Project.ID
+
+	// A project with zero tasks is a normal, usable state.
+	empty := decode[struct {
+		Columns []struct {
+			Key   string        `json:"key"`
+			Tasks []domain.Task `json:"tasks"`
+		} `json:"columns"`
+		Containers   []json.RawMessage `json:"containers"`
+		PlanningJobs []domain.Task     `json:"planning_jobs"`
+	}](t, env.do("GET", "/api/projects/"+projectID+"/board", nil))
+	if len(empty.Containers) != 0 || len(empty.PlanningJobs) != 0 {
+		t.Errorf("an empty project must report no containers and no planning jobs")
+	}
+	for _, column := range empty.Columns {
+		if len(column.Tasks) != 0 {
+			t.Errorf("column %s must be empty, got %+v", column.Key, column.Tasks)
+		}
+	}
+
+	// A manual container plus two children, one depending on the other.
+	var container domain.Task
+	env.expect("POST", "/api/projects/"+projectID+"/tasks", map[string]any{
+		"title":       "Ship OAuth login",
+		"description": "The broader outcome.",
+		"kind":        string(domain.TaskKindContainer),
+	}, http.StatusCreated, &container)
+	var first domain.Task
+	env.expect("POST", "/api/projects/"+projectID+"/tasks", map[string]any{
+		"title":               "Implement the provider",
+		"acceptance_criteria": "Login works.",
+		"parent_task_id":      container.ID,
+	}, http.StatusCreated, &first)
+	var second domain.Task
+	env.expect("POST", "/api/projects/"+projectID+"/tasks", map[string]any{
+		"title":               "Add integration tests",
+		"acceptance_criteria": "The login flow is covered.",
+		"parent_task_id":      container.ID,
+		"depends_on":          []string{first.ID},
+	}, http.StatusCreated, &second)
+	if first.ParentTaskID != container.ID {
+		t.Fatalf("expected the child to be nested, got %q", first.ParentTaskID)
+	}
+
+	// The board keeps the container out of the workflow columns and reports its
+	// derived progress.
+	var board struct {
+		Columns []struct {
+			Key   string        `json:"key"`
+			Tasks []domain.Task `json:"tasks"`
+		} `json:"columns"`
+		Containers []struct {
+			Task     domain.Task   `json:"task"`
+			Children []domain.Task `json:"children"`
+			Progress struct {
+				Total    int `json:"total"`
+				Done     int `json:"done"`
+				Progress struct {
+					Status string `json:"status"`
+				} `json:"progress"`
+			} `json:"progress"`
+		} `json:"containers"`
+		PlanningJobs []domain.Task `json:"planning_jobs"`
+		Stats        struct {
+			Tasks        int `json:"tasks"`
+			Containers   int `json:"containers"`
+			PlanningJobs int `json:"planning_jobs"`
+		} `json:"stats"`
+	}
+	env.expect("GET", "/api/projects/"+projectID+"/board", nil, http.StatusOK, &board)
+	if len(board.Containers) != 1 {
+		t.Fatalf("expected 1 container on the board, got %d", len(board.Containers))
+	}
+	if board.Containers[0].Task.ID != container.ID || len(board.Containers[0].Children) != 2 {
+		t.Errorf("unexpected container view %+v", board.Containers[0])
+	}
+	if board.Containers[0].Progress.Total != 2 {
+		t.Errorf("expected 2 descendant work tasks, got %d", board.Containers[0].Progress.Total)
+	}
+	columnTasks := 0
+	for _, column := range board.Columns {
+		for _, task := range column.Tasks {
+			columnTasks++
+			if task.IsContainer() {
+				t.Errorf("container %q must not appear in a workflow column", task.ID)
+			}
+		}
+	}
+	if columnTasks != 2 {
+		t.Errorf("expected exactly the 2 work tasks in the columns, got %d", columnTasks)
+	}
+	if board.Stats.Tasks != 2 || board.Stats.Containers != 1 || board.Stats.PlanningJobs != 0 {
+		t.Errorf("unexpected board stats %+v", board.Stats)
+	}
+
+	// A container is refused by every execution action.
+	for _, action := range []struct {
+		name string
+		body any
+	}{
+		{name: "start"},
+		{name: "retry"},
+		{name: "move", body: map[string]any{"status": "ready"}},
+	} {
+		resp := env.do("POST", "/api/tasks/"+container.ID+"/"+action.name, action.body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("expected %s on a container to return 409, got %d", action.name, resp.StatusCode)
+		}
+	}
+	// A direct status update on a container is refused too.
+	resp := env.do("PATCH", "/api/tasks/"+container.ID, map[string]any{"status": "ready"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("expected a status update on a container to return 409, got %d", resp.StatusCode)
+	}
+
+	// The task detail carries parent/children/ancestors and no issue.
+	var detail struct {
+		Task      domain.Task   `json:"task"`
+		Parent    *domain.Task  `json:"parent"`
+		Ancestors []domain.Task `json:"ancestors"`
+		Children  []domain.Task `json:"children"`
+		Progress  *struct {
+			Total int `json:"total"`
+		} `json:"progress"`
+		Dependencies []struct {
+			TaskID string `json:"task_id"`
+		} `json:"dependencies"`
+	}
+	env.expect("GET", "/api/tasks/"+second.ID+"/detail", nil, http.StatusOK, &detail)
+	if detail.Parent == nil || detail.Parent.ID != container.ID {
+		t.Errorf("expected the parent in the task detail, got %+v", detail.Parent)
+	}
+	if len(detail.Ancestors) != 1 || detail.Ancestors[0].ID != container.ID {
+		t.Errorf("expected the ancestor chain, got %+v", detail.Ancestors)
+	}
+	if len(detail.Dependencies) != 1 || detail.Dependencies[0].TaskID != first.ID {
+		t.Errorf("expected the dependency in the task detail, got %+v", detail.Dependencies)
+	}
+	childDetail := decode[map[string]any](t, env.do("GET", "/api/tasks/"+second.ID+"/detail", nil))
+	if _, present := childDetail["issue"]; present {
+		t.Error("the task detail must not expose an issue field")
+	}
+
+	// The container's own detail exposes its children and derived progress.
+	var containerDetail struct {
+		Children []domain.Task `json:"children"`
+		Progress *struct {
+			Total int `json:"total"`
+		} `json:"progress"`
+	}
+	env.expect("GET", "/api/tasks/"+container.ID+"/detail", nil, http.StatusOK, &containerDetail)
+	if len(containerDetail.Children) != 2 {
+		t.Errorf("expected 2 children in the container detail, got %d", len(containerDetail.Children))
+	}
+	if containerDetail.Progress == nil || containerDetail.Progress.Total != 2 {
+		t.Errorf("expected derived progress in the container detail, got %+v", containerDetail.Progress)
+	}
+
+	// The board envelope always carries list-shaped fields, never null: the
+	// generated client relies on that (see the api json normalisation contract).
+	raw := decode[map[string]any](t, env.do("GET", "/api/projects/"+projectID+"/board", nil))
+	for _, field := range []string{"columns", "containers", "planning_jobs", "agents"} {
+		if raw[field] == nil {
+			t.Errorf("board.%s must be a list, never null", field)
+		}
+	}
+	rawContainers, ok := raw["containers"].([]any)
+	if !ok || len(rawContainers) != 1 {
+		t.Fatalf("expected one raw container, got %T %v", raw["containers"], raw["containers"])
+	}
+	rawContainer, _ := rawContainers[0].(map[string]any)
+	rawTask, _ := rawContainer["task"].(map[string]any)
+	if rawTask["kind"] != string(domain.TaskKindContainer) {
+		t.Errorf("board containers must expose kind=container, got %v", rawTask["kind"])
+	}
+	if rawContainer["progress"] == nil {
+		t.Error("board containers must carry derived progress")
+	}
+
+	// The planning listing returns only internal planning records.
+	planning := decode[listEnvelope[domain.Task]](t, env.do("GET", "/api/projects/"+projectID+"/tasks?planning=true", nil))
+	if planning.Total != 0 {
+		t.Errorf("a project without a plan must have no planning records, got %d", planning.Total)
+	}
+
+	// The removed issue routes are gone from the router entirely.
+	for _, path := range []string{
+		"/api/projects/" + projectID + "/issues",
+		"/api/issues/" + container.ID,
+		"/api/issues/" + container.ID + "/tasks",
+	} {
+		resp := env.do("GET", path, nil)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("removed route %s must not be served, got %d", path, resp.StatusCode)
+		}
 	}
 }

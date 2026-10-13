@@ -60,7 +60,7 @@ func isSlug(s string) bool {
 // BuiltInRoles returns the roles seeded into every Orxest installation.
 func BuiltInRoles() []Role {
 	return []Role{
-		{ID: RoleArchitect, Name: "Architect", Description: "Decomposes product intent into issues, tasks, dependencies and acceptance criteria.", BuiltIn: true},
+		{ID: RoleArchitect, Name: "Architect", Description: "Decomposes product intent into tasks, dependencies, optional hierarchy and acceptance criteria.", BuiltIn: true},
 		{ID: RoleSeniorDeveloper, Name: "Senior Developer", Description: "Implements complex changes and reworks rejected work.", BuiltIn: true},
 		{ID: RoleJuniorDeveloper, Name: "Junior Developer", Description: "Implements well specified, low risk changes.", BuiltIn: true},
 		{ID: RoleDeveloper, Name: "Developer", Description: "Generic implementation role for lightweight workflows.", BuiltIn: true},

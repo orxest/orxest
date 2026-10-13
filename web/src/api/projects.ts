@@ -3,7 +3,6 @@ import type {
   ArchitectPlan,
   BoardResponse,
   DecomposeResult,
-  Issue,
   ListResponse,
   OrxestEvent,
   PauseResult,
@@ -17,6 +16,8 @@ import type {
   ReasoningLevel,
   RetryFailedResult,
   Task,
+  TaskKind,
+  TaskStatus,
   Workflow,
 } from '@/types'
 
@@ -73,34 +74,47 @@ export interface UpdateProjectInput {
   settings?: ProjectSettings
 }
 
-export interface CreateIssueInput {
-  title: string
-  description?: string
-  priority?: number
-  labels?: string[]
-  acceptance_criteria?: string
-  status?: string
-}
-
-export interface CreateIssueTaskInput {
+/**
+ * `POST /api/projects/{id}/tasks`. Only `title` is required: a task belongs
+ * directly to a project and neither a parent nor a category is mandatory.
+ */
+export interface CreateTaskInput {
   title: string
   description?: string
   priority?: number
   acceptance_criteria?: string
+  /** Optional classification, editable later. Never required. */
   labels?: string[]
-  depends_on?: string[]
   workflow_id?: string
   max_attempts?: number
+  kind?: TaskKind
+  status?: TaskStatus
+  /** Optional structural parent: the container this task belongs to. */
+  parent_task_id?: string
+  source?: string
+  /** Task ids that must complete before this one. Independent of the parent. */
+  depends_on?: string[]
   agent_id?: string
+  order_index?: number
+}
+
+/** Filters of `GET /api/projects/{id}/tasks`. */
+export interface ProjectTaskListFilter {
+  /** Comma separated statuses, e.g. `ready,running`. */
+  status?: string
+  /** List the internal architect planning records instead of work items. */
+  planning?: boolean
+  /** `all` returns every kind, including internal planning records. */
+  kind?: 'all'
 }
 
 export interface DecomposeInput {
   request: string
   title?: string
-  issue_id?: string
   priority?: number
   agent_id?: string
   max_attempts?: number
+  /** When set, the plan is persisted immediately and no agent runs. */
   plan?: ArchitectPlan
 }
 
@@ -144,11 +158,19 @@ export const projectsApi = {
       query: { limit, offset },
     }),
 
-  issues: (projectId: string, status?: string) =>
-    request<ListResponse<Issue>>(`/projects/${projectId}/issues`, { query: { status } }),
+  /**
+   * Project tasks. The default listing is user-visible work (`work` plus the
+   * `container` parents that group it); `planning` returns the internal
+   * architect records instead and `kind: 'all'` returns everything.
+   */
+  tasks: (projectId: string, filter: ProjectTaskListFilter = {}) =>
+    request<ListResponse<Task>>(`/projects/${projectId}/tasks`, {
+      query: { status: filter.status, planning: filter.planning, kind: filter.kind },
+    }),
 
-  createIssue: (projectId: string, input: CreateIssueInput) =>
-    request<Issue>(`/projects/${projectId}/issues`, { method: 'POST', body: input }),
+  /** Creates a task directly in the project. Only `title` is required. */
+  createTask: (projectId: string, input: CreateTaskInput) =>
+    request<Task>(`/projects/${projectId}/tasks`, { method: 'POST', body: input }),
 
   decompose: (projectId: string, input: DecomposeInput) =>
     request<DecomposeResult>(`/projects/${projectId}/decompose`, { method: 'POST', body: input }),
@@ -181,9 +203,6 @@ export const projectsApi = {
       method: 'POST',
       rawBody: { contentType: 'text/yaml', body: yaml },
     }),
-
-  listProjectTasks: (projectId: string) =>
-    request<ListResponse<Task>>(`/projects/${projectId}/tasks`),
 
   /**
    * Resets every failed task of the project: each one returns to the ready

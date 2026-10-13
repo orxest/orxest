@@ -3,11 +3,11 @@ import {
   executionStatusMeta,
   failureKindLabel,
   failureKindVariant,
-  issueStatusMeta,
   priorityMeta,
+  taskKindMeta,
   taskStatusMeta,
 } from '@/lib/status'
-import type { ExecutionStatus, FailureKind, IssueStatus, TaskStatus } from '@/types'
+import type { ExecutionStatus, FailureKind, TaskKind, TaskStatus } from '@/types'
 
 export function TaskStatusBadge({
   status,
@@ -24,10 +24,21 @@ export function TaskStatusBadge({
   )
 }
 
-export function IssueStatusBadge({ status, className }: { status: IssueStatus | string; className?: string }) {
-  const meta = issueStatusMeta(status)
+/**
+ * How Orxest treats a task. `container` marks a non-executable structural
+ * parent and `decomposition` an internal architect planning record, so both are
+ * visually distinct from ordinary work items.
+ */
+export function TaskKindBadge({
+  kind,
+  className,
+}: {
+  kind: TaskKind | string | undefined
+  className?: string
+}) {
+  const meta = taskKindMeta(kind)
   return (
-    <Badge variant={meta.variant} className={className}>
+    <Badge variant={meta.variant} className={className} title={meta.description}>
       {meta.label}
     </Badge>
   )

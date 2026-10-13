@@ -7,7 +7,7 @@ import (
 	"github.com/orxest/orxest/internal/domain"
 )
 
-const eventColumns = `id, project_id, issue_id, task_id, execution_id, type, message, payload, created_at`
+const eventColumns = `id, project_id, task_id, execution_id, type, message, payload, created_at`
 
 type eventRepo struct{ q querier }
 
@@ -17,8 +17,8 @@ func (r *eventRepo) Append(ctx context.Context, e *domain.Event) error {
 		return err
 	}
 	_, err = r.q.ExecContext(ctx, `
-		INSERT INTO events (`+eventColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.ProjectID, e.IssueID, e.TaskID, e.ExecutionID, e.Type, e.Message,
+		INSERT INTO events (`+eventColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.ProjectID, e.TaskID, e.ExecutionID, e.Type, e.Message,
 		payload, formatTime(e.CreatedAt))
 	if err != nil {
 		return fmt.Errorf("sqlite: appending event: %w", err)
@@ -57,7 +57,7 @@ func (r *eventRepo) query(ctx context.Context, q string, args ...any) ([]domain.
 			payload   string
 			createdAt string
 		)
-		if err := rows.Scan(&e.ID, &e.ProjectID, &e.IssueID, &e.TaskID, &e.ExecutionID,
+		if err := rows.Scan(&e.ID, &e.ProjectID, &e.TaskID, &e.ExecutionID,
 			&e.Type, &e.Message, &payload, &createdAt); err != nil {
 			return nil, err
 		}

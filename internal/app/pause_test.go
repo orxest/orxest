@@ -102,7 +102,7 @@ func TestProjectPauseStopsTheAgentProcess(t *testing.T) {
 		t.Fatalf("creating project: %v", err)
 	}
 	project := &bundle.Project
-	task := newIssueAndTask(t, svc, project, "Runs until the project is paused", nil)
+	task := newProjectTask(t, svc, project, "Runs until the project is paused", nil)
 
 	drive(t, svc, "the task to reach a running execution", func() bool {
 		return loadTask(t, svc, task.ID).Status == domain.TaskRunning

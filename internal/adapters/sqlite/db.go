@@ -114,9 +114,6 @@ func (d *DB) Projects() repository.ProjectRepository { return &projectRepo{q: d.
 // Repositories implements repository.Store.
 func (d *DB) Repositories() repository.RepositoryRepository { return &repositoryRepo{q: d.q} }
 
-// Issues implements repository.Store.
-func (d *DB) Issues() repository.IssueRepository { return &issueRepo{q: d.q} }
-
 // Tasks implements repository.Store.
 func (d *DB) Tasks() repository.TaskRepository { return &taskRepo{q: d.q} }
 
@@ -201,6 +198,15 @@ func (d *DB) Migrate(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("sqlite: reading migration %s: %w", f.name, err)
 		}
+		// Foreign keys are suspended around the migration transaction. A
+		// migration that must rebuild a referenced table (0005 does, to drop a
+		// NOT NULL issue foreign key from `tasks`) cannot do that with
+		// enforcement on, and `PRAGMA foreign_keys` is a no-op inside a
+		// transaction, so it has to be set here. It is restored before the
+		// schema_migrations row is written, so the check below runs enforced.
+		if _, err := d.sqlDB.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+			return fmt.Errorf("sqlite: disabling foreign keys for %s: %w", f.name, err)
+		}
 		err = d.WithTx(ctx, func(ctx context.Context, tx repository.Store) error {
 			txDB, ok := tx.(*DB)
 			if !ok {
@@ -209,16 +215,54 @@ func (d *DB) Migrate(ctx context.Context) error {
 			if _, err := txDB.q.ExecContext(ctx, string(body)); err != nil {
 				return fmt.Errorf("applying %s: %w", f.name, err)
 			}
+			return nil
+		})
+		if err == nil {
+			// The schema must be internally consistent before the migration is
+			// recorded as applied; a violation here rolls the version back.
+			var violations int
+			violations, err = foreignKeyViolations(ctx, d.sqlDB)
+			if err == nil && violations > 0 {
+				err = fmt.Errorf("applying %s left %d foreign key violation(s)", f.name, violations)
+			}
+		}
+		if _, restoreErr := d.sqlDB.ExecContext(ctx, `PRAGMA foreign_keys = ON`); restoreErr != nil && err == nil {
+			err = fmt.Errorf("sqlite: restoring foreign keys after %s: %w", f.name, restoreErr)
+		}
+		if err != nil {
+			return fmt.Errorf("sqlite: migration %s: %w", f.name, err)
+		}
+		// Record the version only after the body and its foreign keys verified,
+		// in its own transaction, so a failed migration is never half-marked.
+		if err := d.WithTx(ctx, func(ctx context.Context, tx repository.Store) error {
+			txDB, ok := tx.(*DB)
+			if !ok {
+				return errors.New("sqlite: transaction is not a *sqlite.DB")
+			}
 			_, err := txDB.q.ExecContext(ctx,
 				`INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)`,
 				f.version, f.name, formatTime(time.Now()))
 			return err
-		})
-		if err != nil {
-			return fmt.Errorf("sqlite: migration %s: %w", f.name, err)
+		}); err != nil {
+			return fmt.Errorf("sqlite: recording migration %s: %w", f.name, err)
 		}
 	}
 	return nil
+}
+
+// foreignKeyViolations returns how many rows violate a foreign key, which is the
+// post-condition every migration must satisfy.
+func foreignKeyViolations(ctx context.Context, db *sql.DB) (int, error) {
+	rows, err := db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		n++
+	}
+	return n, rows.Err()
 }
 
 type migrationFile struct {
@@ -275,6 +319,29 @@ func nullTime(t *time.Time) any {
 		return nil
 	}
 	return formatTime(*t)
+}
+
+// nullString maps an empty string to SQL NULL, which is how optional single
+// valued columns such as tasks.parent_task_id are stored.
+func nullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// applyLimitArgs appends LIMIT/OFFSET placeholders to an existing query and its
+// argument list.
+func applyLimitArgs(q string, args []any, limit, offset int) (string, []any) {
+	if limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, limit)
+		if offset > 0 {
+			q += " OFFSET ?"
+			args = append(args, offset)
+		}
+	}
+	return q, args
 }
 
 func scanNullTime(ns sql.NullString) (*time.Time, error) {

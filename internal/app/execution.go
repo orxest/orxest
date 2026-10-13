@@ -79,7 +79,6 @@ func (s *ExecutionService) Start(ctx context.Context, in StartExecutionInput) (*
 		ID:               domain.NewID(domain.IDPrefixExecution),
 		ProjectID:        in.Task.ProjectID,
 		TaskID:           in.Task.ID,
-		IssueID:          in.Task.IssueID,
 		AgentID:          in.Agent.ID,
 		AgentName:        in.Agent.Name,
 		RoleID:           in.Step.RoleID,
@@ -327,6 +326,7 @@ func (s *ExecutionService) prepareWorkspace(
 		ExecutionID:    exec.ID,
 		Project:        *project,
 		Task:           *task,
+		Ancestors:      promptInput.Ancestors,
 		Workflow:       *workflow,
 		Step:           step,
 		Role:           role,
@@ -338,9 +338,6 @@ func (s *ExecutionService) prepareWorkspace(
 		TargetBranch:   project.TargetBranch,
 		RepositoryPath: project.RepositoryPath,
 		Timeout:        s.executionTimeout(project, step, agent),
-	}
-	if issue, err := s.deps.Store.Issues().Get(ctx, task.IssueID); err == nil {
-		req.Issue = issue
 	}
 	if isDecompositionTask(task) {
 		req.OutputSchema = domain.ArchitectPlanSchema()
@@ -376,8 +373,22 @@ func (s *ExecutionService) promptInput(
 		BranchName:   branch,
 		TargetBranch: project.TargetBranch,
 	}
-	if issue, err := s.deps.Store.Issues().Get(ctx, task.IssueID); err == nil {
-		in.Issue = issue
+	// A child task receives the container chain above it. Removing the issue
+	// layer must not discard the high-level intent that used to be shared with
+	// the tasks of an issue, so every ancestor contributes its title,
+	// description and acceptance criteria.
+	ancestors, err := s.deps.Store.Tasks().Ancestors(ctx, task.ID)
+	if err != nil {
+		return in, err
+	}
+	for _, a := range ancestors {
+		in.Ancestors = append(in.Ancestors, ports.TaskSummary{
+			ID:                 a.ID,
+			Title:              a.Title,
+			Status:             string(a.Status),
+			AcceptanceCriteria: a.AcceptanceCriteria,
+			Summary:            a.Description,
+		})
 	}
 	deps, err := s.deps.Store.Tasks().DependencyStatuses(ctx, task.ID)
 	if err != nil {
@@ -759,7 +770,6 @@ func (s *ExecutionService) publishExecution(ctx context.Context, exec *domain.Ex
 	}
 	s.deps.publish(ctx, domain.Event{
 		ProjectID:   exec.ProjectID,
-		IssueID:     exec.IssueID,
 		TaskID:      exec.TaskID,
 		ExecutionID: exec.ID,
 		Type:        eventType,

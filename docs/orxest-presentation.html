@@ -227,7 +227,6 @@
       </div>
       <div class="pipeline" style="margin-bottom:18px">
         <div class="node hot"><span class="k">you create</span>Project</div><span class="arrow">→</span>
-        <div class="node">Issues</div><span class="arrow">→</span>
         <div class="node">Tasks</div><span class="arrow">→</span>
         <div class="node hot"><span class="k">you choose</span>Workflow</div><span class="arrow">→</span>
         <div class="node">Steps</div><span class="arrow">→</span>
@@ -270,7 +269,8 @@
               <div class="node">review</div>
             </div>
             <p class="small dim" style="margin-top:8px">Planning is not one of these steps: the architect runs
-              once per feature request to produce a reviewable issue/task draft, and the generated tasks then
+              once per feature request to produce a reviewable task draft (one or many tasks, with optional
+              dependencies and parent/child structure), and the generated tasks then
               run the workflow above.</p>
           </div>
           <div class="card tight">
@@ -515,7 +515,7 @@
           <div class="ui">
             <div class="ui-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="ui-url">127.0.0.1:8787/projects/prj_…/agents</span></div>
             <div class="ui-tabs">
-              <span class="ui-tab">Board</span><span class="ui-tab">Issues</span><span class="ui-tab">Activity</span>
+              <span class="ui-tab">Board</span><span class="ui-tab">Activity</span>
               <span class="ui-tab on">Agents</span><span class="ui-tab">Workflow</span>
             </div>
             <div class="ui-body">
@@ -651,7 +651,7 @@ task dispatched   task_id=tsk_…  step=implementation
             <div class="ui-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="ui-url">127.0.0.1:8787/projects/prj_…/board</span></div>
             <div class="ui-body">
               <div class="ui-h1">Payments platform</div>
-              <div class="ui-sub">4 issues · 9 tasks · 2 running · max concurrent 2 · auto integrate on</div>
+              <div class="ui-sub">9 tasks · 1 container · 2 running · max concurrent 2 · auto integrate on</div>
               <div class="grid3">
                 <div class="ui-card" style="margin:0">
                   <div class="h">Backlog <span class="dim">3</span></div>

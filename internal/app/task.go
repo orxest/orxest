@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/orxest/orxest/internal/domain"
 	"github.com/orxest/orxest/internal/domain/repository"
@@ -21,7 +22,8 @@ func NewTaskService(deps Deps, wake *trigger) *TaskService {
 	return &TaskService{deps: deps, wake: wake}
 }
 
-// CreateTaskInput is the task creation request.
+// CreateTaskInput is the task creation request. Only Title is required: a task
+// belongs directly to a project and needs neither an issue nor a parent.
 type CreateTaskInput struct {
 	Title              string            `json:"title"`
 	Description        string            `json:"description"`
@@ -32,7 +34,12 @@ type CreateTaskInput struct {
 	MaxAttempts        int               `json:"max_attempts"`
 	Kind               domain.TaskKind   `json:"kind"`
 	Status             domain.TaskStatus `json:"status"`
-	// DependsOn lists task ids that must complete first.
+	// ParentTaskID optionally makes this task a child of a container.
+	ParentTaskID string `json:"parent_task_id"`
+	// Source records manual vs architect origin. Metadata only.
+	Source string `json:"source"`
+	// DependsOn lists task ids that must complete first. Dependencies are
+	// independent of ParentTaskID.
 	DependsOn []string `json:"depends_on"`
 	// AgentID is an optional one-shot hint for the first execution.
 	AgentID string `json:"agent_id"`
@@ -40,13 +47,10 @@ type CreateTaskInput struct {
 	OrderIndex *int `json:"order_index"`
 }
 
-// Create creates a task inside an issue.
-func (s *TaskService) Create(ctx context.Context, issueID string, in CreateTaskInput) (*domain.Task, error) {
-	issue, err := s.deps.Store.Issues().Get(ctx, issueID)
-	if err != nil {
-		return nil, err
-	}
-	project, err := s.deps.Store.Projects().Get(ctx, issue.ProjectID)
+// Create creates a task inside a project. It is a project level use case: no
+// intermediate entity and no parent task are required.
+func (s *TaskService) Create(ctx context.Context, projectID string, in CreateTaskInput) (*domain.Task, error) {
+	project, err := s.deps.Store.Projects().Get(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -61,11 +65,16 @@ func (s *TaskService) Create(ctx context.Context, issueID string, in CreateTaskI
 		return nil, domain.Invalidf("workflow_id", "unknown workflow %q", workflowID)
 	}
 
+	parent, err := s.resolveParent(ctx, project.ID, "", in.ParentTaskID)
+	if err != nil {
+		return nil, err
+	}
+
 	now := s.deps.now()
 	task := &domain.Task{
 		ID:                 domain.NewID(domain.IDPrefixTask),
 		ProjectID:          project.ID,
-		IssueID:            issue.ID,
+		ParentTaskID:       in.ParentTaskID,
 		Title:              strings.TrimSpace(in.Title),
 		Description:        in.Description,
 		Priority:           in.Priority,
@@ -73,6 +82,7 @@ func (s *TaskService) Create(ctx context.Context, issueID string, in CreateTaskI
 		AcceptanceCriteria: in.AcceptanceCriteria,
 		Labels:             in.Labels,
 		Kind:               in.Kind,
+		Source:             in.Source,
 		WorkflowID:         workflowID,
 		MaxAttempts:        in.MaxAttempts,
 		PreferredAgentID:   in.AgentID,
@@ -88,13 +98,31 @@ func (s *TaskService) Create(ctx context.Context, issueID string, in CreateTaskI
 	if err := task.Validate(); err != nil {
 		return nil, err
 	}
-	order, err := s.deps.Store.Tasks().NextOrderIndex(ctx, issue.ID)
+	// Ordering slots are scoped to the parent list. A parent is always a
+	// container once it has a child, so scoping to it here keeps the child's
+	// order index inside its own group even when the parent kind is promoted
+	// inside the transaction below.
+	orderParent := ""
+	if parent != nil {
+		orderParent = parent.ID
+	}
+	order, err := s.deps.Store.Tasks().NextOrderIndex(ctx, project.ID, orderParent)
 	if err != nil {
 		return nil, err
 	}
 	task.OrderIndex = order
 	if in.OrderIndex != nil {
 		task.OrderIndex = *in.OrderIndex
+	}
+
+	// A parent with children is a container by definition: the parent becomes
+	// structural and non-executable the moment it gains its first child. This is
+	// validated here so the whole create can still fail before anything is
+	// written, and applied inside the transaction below.
+	if parent != nil {
+		if err := checkPromotableToContainer(parent); err != nil {
+			return nil, err
+		}
 	}
 
 	// Validate dependencies before persisting anything.
@@ -106,8 +134,20 @@ func (s *TaskService) Create(ctx context.Context, issueID string, in CreateTaskI
 		if dep.ProjectID != project.ID {
 			return nil, domain.Invalidf("depends_on", "task %q belongs to another project", depID)
 		}
+		if !dep.IsExecutableWork() {
+			return nil, domain.Invalidf("depends_on", "task %q is not executable work, so it cannot gate other work", depID)
+		}
+		if parent != nil && depID == parent.ID {
+			return nil, domain.Invalidf("depends_on", "a task cannot depend on its own parent container")
+		}
 	}
 	err = s.deps.Store.WithTx(ctx, func(ctx context.Context, tx repository.Store) error {
+		if parent != nil {
+			applyContainerPromotion(parent, s.deps.now())
+			if err := tx.Tasks().Update(ctx, parent); err != nil {
+				return err
+			}
+		}
 		if err := tx.Tasks().Create(ctx, task); err != nil {
 			return err
 		}
@@ -123,18 +163,49 @@ func (s *TaskService) Create(ctx context.Context, issueID string, in CreateTaskI
 	}
 	s.deps.publish(ctx, domain.Event{
 		ProjectID: project.ID,
-		IssueID:   issue.ID,
 		TaskID:    task.ID,
 		Type:      domain.EventTaskCreated,
 		Message:   "task " + task.Title + " created",
 		Payload: map[string]any{
 			"status": string(task.Status),
 			"kind":   string(task.Kind),
+			"source": task.Source,
 		},
 		CreatedAt: now,
 	})
 	s.wake.Fire()
 	return task, nil
+}
+
+// resolveParent validates an optional parent task. The parent must exist, belong
+// to the same project, and must not be the task itself or one of its
+// descendants, so the hierarchy can never contain a cycle.
+func (s *TaskService) resolveParent(ctx context.Context, projectID, taskID, parentID string) (*domain.Task, error) {
+	if parentID == "" {
+		return nil, nil
+	}
+	parent, err := s.deps.Store.Tasks().Get(ctx, parentID)
+	if err != nil {
+		return nil, domain.Invalidf("parent_task_id", "unknown task %q", parentID)
+	}
+	if parent.ProjectID != projectID {
+		return nil, domain.Invalidf("parent_task_id", "task %q belongs to another project", parentID)
+	}
+	if taskID != "" {
+		if parentID == taskID {
+			return nil, domain.Invalidf("parent_task_id", "a task cannot be its own parent")
+		}
+		// Making parentID the parent of taskID creates a cycle when taskID is
+		// already an ancestor of parentID.
+		cycle, err := s.deps.Store.Tasks().ReachableByParent(ctx, taskID, parentID)
+		if err != nil {
+			return nil, err
+		}
+		if cycle {
+			return nil, domain.Invalidf("parent_task_id", "task %q is an ancestor of %q, so the relationship would create a cycle", taskID, parentID)
+		}
+	}
+	return parent, nil
 }
 
 // Get returns a task.
@@ -156,6 +227,9 @@ type UpdateTaskInput struct {
 	Labels             *[]string          `json:"labels"`
 	MaxAttempts        *int               `json:"max_attempts"`
 	Status             *domain.TaskStatus `json:"status"`
+	// ParentTaskID moves the task within the hierarchy. An empty string makes it
+	// a top-level task.
+	ParentTaskID *string `json:"parent_task_id"`
 }
 
 // Update applies a partial update with transition validation.
@@ -182,7 +256,28 @@ func (s *TaskService) Update(ctx context.Context, id string, in UpdateTaskInput)
 	if in.MaxAttempts != nil {
 		task.MaxAttempts = *in.MaxAttempts
 	}
+	if in.ParentTaskID != nil && *in.ParentTaskID != task.ParentTaskID {
+		parent, err := s.resolveParent(ctx, task.ProjectID, task.ID, *in.ParentTaskID)
+		if err != nil {
+			return nil, err
+		}
+		previousParentID := task.ParentTaskID
+		task.ParentTaskID = *in.ParentTaskID
+		// Gaining a child turns a task into a container; losing its last child
+		// must never leave a permanently non-runnable empty container.
+		if parent != nil {
+			if err := s.promoteToContainer(ctx, parent); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.reconcileContainer(ctx, previousParentID); err != nil {
+			return nil, err
+		}
+	}
 	if in.Status != nil && *in.Status != task.Status {
+		if task.IsContainer() {
+			return nil, domain.Conflictf("a container has no workflow of its own; move its child tasks instead")
+		}
 		if !domain.CanTransitionTask(task.Status, *in.Status) {
 			return nil, domain.Conflictf("cannot move task from %q to %q", task.Status, *in.Status)
 		}
@@ -200,6 +295,88 @@ func (s *TaskService) Update(ctx context.Context, id string, in UpdateTaskInput)
 	return task, nil
 }
 
+// checkPromotableToContainer validates that a task may become a structural
+// container because it is gaining a child. A task that is still in flight is
+// refused rather than silently stranded, because a container is never
+// dispatched and owns no branch or worktree.
+func checkPromotableToContainer(parent *domain.Task) error {
+	if parent == nil || parent.IsContainer() {
+		return nil
+	}
+	if !parent.IsExecutableWork() {
+		return domain.Invalidf("parent_task_id", "task %q is a %s and cannot become a parent", parent.ID, parent.Kind)
+	}
+	switch parent.Status {
+	case domain.TaskBacklog, domain.TaskFailed, domain.TaskCancelled:
+		// Safe to promote: nothing is in flight and no integration is pending.
+		return nil
+	}
+	return domain.Conflictf("task %q is %s and cannot become a container while it is in flight; complete or cancel it first", parent.Title, parent.Status)
+}
+
+// applyContainerPromotion mutates a task into a container. It must be preceded by
+// checkPromotableToContainer.
+func applyContainerPromotion(parent *domain.Task, now time.Time) {
+	if parent == nil || parent.IsContainer() {
+		return
+	}
+	parent.Kind = domain.TaskKindContainer
+	parent.CurrentExecutionID = ""
+	parent.WorkflowID = ""
+	parent.CurrentWorkflowStep = ""
+	parent.UpdatedAt = now
+}
+
+// promoteToContainer applies the promotion and persists it, for the paths that
+// are not already inside a transaction.
+func (s *TaskService) promoteToContainer(ctx context.Context, parent *domain.Task) error {
+	if parent == nil || parent.IsContainer() {
+		return nil
+	}
+	if err := checkPromotableToContainer(parent); err != nil {
+		return err
+	}
+	applyContainerPromotion(parent, s.deps.now())
+	if err := parent.Validate(); err != nil {
+		return err
+	}
+	return s.deps.Store.Tasks().Update(ctx, parent)
+}
+
+// reconcileContainer keeps the "no empty container" invariant. When a
+// container's last child is gone it is converted back into an executable work
+// task, so it can never stay permanently unrunnable.
+func (s *TaskService) reconcileContainer(ctx context.Context, containerID string) error {
+	if containerID == "" {
+		return nil
+	}
+	container, err := s.deps.Store.Tasks().Get(ctx, containerID)
+	if err != nil {
+		return nil // already deleted
+	}
+	if !container.IsContainer() {
+		return nil
+	}
+	n, err := s.deps.Store.Tasks().CountChildren(ctx, containerID)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	container.Kind = domain.TaskKindWork
+	container.UpdatedAt = s.deps.now()
+	s.deps.publish(ctx, domain.Event{
+		ProjectID: container.ProjectID,
+		TaskID:    container.ID,
+		Type:      domain.EventTaskUpdated,
+		Message:   "container " + container.Title + " became an executable work task because it has no children left",
+		Payload:   map[string]any{"kind": string(container.Kind)},
+		CreatedAt: container.UpdatedAt,
+	})
+	return s.deps.Store.Tasks().Update(ctx, container)
+}
+
 // Delete removes a task.
 func (s *TaskService) Delete(ctx context.Context, id string) error {
 	task, err := s.deps.Store.Tasks().Get(ctx, id)
@@ -209,12 +386,15 @@ func (s *TaskService) Delete(ctx context.Context, id string) error {
 	if task.Status == domain.TaskRunning {
 		return domain.Conflictf("cannot delete a running task; cancel it first")
 	}
+	parentID := task.ParentTaskID
 	if err := s.deps.Store.Tasks().Delete(ctx, id); err != nil {
+		return err
+	}
+	if err := s.reconcileContainer(ctx, parentID); err != nil {
 		return err
 	}
 	s.deps.publish(ctx, domain.Event{
 		ProjectID: task.ProjectID,
-		IssueID:   task.IssueID,
 		TaskID:    task.ID,
 		Type:      domain.EventTaskUpdated,
 		Message:   "task deleted",
@@ -233,12 +413,18 @@ func (s *TaskService) AddDependency(ctx context.Context, taskID, dependsOnID str
 	if err != nil {
 		return nil, err
 	}
+	if !task.IsExecutableWork() {
+		return nil, domain.Invalidf("depends_on", "task %q is a %s, which is never executed", taskID, task.Kind)
+	}
 	dep, err := s.deps.Store.Tasks().Get(ctx, dependsOnID)
 	if err != nil {
 		return nil, domain.Invalidf("depends_on", "unknown task %q", dependsOnID)
 	}
 	if dep.ProjectID != task.ProjectID {
 		return nil, domain.Invalidf("depends_on", "task %q belongs to another project", dependsOnID)
+	}
+	if !dep.IsExecutableWork() {
+		return nil, domain.Invalidf("depends_on", "task %q is a %s, which is never executed, so it cannot gate other work", dependsOnID, dep.Kind)
 	}
 	// A cycle appears when the new dependency already (transitively) depends on
 	// the task.
@@ -249,6 +435,27 @@ func (s *TaskService) AddDependency(ctx context.Context, taskID, dependsOnID str
 	if reachable {
 		return nil, fmt.Errorf("%w: %s already depends on %s", domain.ErrDependencyCycle, dependsOnID, taskID)
 	}
+	// Containment and prerequisites are independent relations, but a dependency
+	// that runs through the hierarchy would create impossible execution
+	// semantics: a container is never executed.
+	ancestors, err := s.deps.Store.Tasks().Ancestors(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range ancestors {
+		if a.ID == dependsOnID {
+			return nil, domain.Invalidf("depends_on", "a task cannot depend on its own ancestor container %q", dependsOnID)
+		}
+	}
+	children, err := s.deps.Store.Tasks().Descendants(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range children {
+		if c.ID == dependsOnID {
+			return nil, domain.Invalidf("depends_on", "a task cannot depend on a task inside its own subtree %q", dependsOnID)
+		}
+	}
 	if err := s.deps.Store.Tasks().AddDependency(ctx, taskID, dependsOnID); err != nil {
 		return nil, err
 	}
@@ -258,7 +465,6 @@ func (s *TaskService) AddDependency(ctx context.Context, taskID, dependsOnID str
 	}
 	s.deps.publish(ctx, domain.Event{
 		ProjectID: task.ProjectID,
-		IssueID:   task.IssueID,
 		TaskID:    task.ID,
 		Type:      domain.EventTaskUpdated,
 		Message:   "dependency added: " + dep.Title,
@@ -323,6 +529,46 @@ func (s *TaskService) DependencyGraph(ctx context.Context, projectID string) (ma
 	return s.deps.Store.Tasks().DependenciesFor(ctx, ids)
 }
 
+// Children returns the direct children of a container.
+func (s *TaskService) Children(ctx context.Context, parentTaskID string) ([]domain.Task, error) {
+	return s.deps.Store.Tasks().Children(ctx, parentTaskID)
+}
+
+// Ancestors returns the container chain above a task, outermost first, so the UI
+// and the execution prompt can show the broader outcome a child belongs to.
+func (s *TaskService) Ancestors(ctx context.Context, taskID string) ([]domain.Task, error) {
+	return s.deps.Store.Tasks().Ancestors(ctx, taskID)
+}
+
+// Descendants returns every task below a task.
+func (s *TaskService) Descendants(ctx context.Context, taskID string) ([]domain.Task, error) {
+	return s.deps.Store.Tasks().Descendants(ctx, taskID)
+}
+
+// Progress returns the derived progress of a container. It is computed from the
+// descendant executable work tasks on read and never written back, so a
+// container can never corrupt the authoritative leaf-task state machine.
+func (s *TaskService) Progress(ctx context.Context, taskID string) (repository.TaskProgress, error) {
+	return s.deps.Store.Tasks().Progress(ctx, taskID)
+}
+
+// BoardTasks lists the tasks of a project's board: user-visible work and the
+// containers that group it, never the internal planning jobs.
+func (s *TaskService) BoardTasks(ctx context.Context, projectID string) ([]domain.Task, error) {
+	return s.deps.Store.Tasks().List(ctx, repository.TaskFilter{
+		ProjectID: projectID,
+		Kinds:     []domain.TaskKind{domain.TaskKindWork, domain.TaskKindContainer},
+	})
+}
+
+// PlanningTasks lists the internal architect planning records of a project.
+func (s *TaskService) PlanningTasks(ctx context.Context, projectID string) ([]domain.Task, error) {
+	return s.deps.Store.Tasks().List(ctx, repository.TaskFilter{
+		ProjectID: projectID,
+		Kinds:     []domain.TaskKind{domain.TaskKindDecomposition},
+	})
+}
+
 // Readiness is the scheduler's verdict about whether a task may run.
 type Readiness struct {
 	Ready   bool     `json:"ready"`
@@ -365,6 +611,12 @@ func (s *TaskService) EvaluateReadiness(ctx context.Context, task *domain.Task) 
 // SetStatus moves a task through the validated state machine and publishes the
 // matching orchestration event.
 func (s *TaskService) SetStatus(ctx context.Context, task *domain.Task, to domain.TaskStatus, opts statusOptions) error {
+	if task.IsContainer() {
+		// A container represents an aggregate outcome, not an executed unit of
+		// work. Its displayed status is derived from its descendants and must
+		// never be written into the authoritative leaf-task state machine.
+		return domain.Conflictf("task %q is a container and has no workflow state of its own", task.Title)
+	}
 	if task.Status == to {
 		return s.refreshStatus(ctx, task, to, opts)
 	}
@@ -485,7 +737,6 @@ func (s *TaskService) publishTask(ctx context.Context, task *domain.Task) {
 	}
 	s.deps.publish(ctx, domain.Event{
 		ProjectID:   task.ProjectID,
-		IssueID:     task.IssueID,
 		TaskID:      task.ID,
 		ExecutionID: task.CurrentExecutionID,
 		Type:        eventType,
@@ -526,6 +777,9 @@ func (s *TaskService) Start(ctx context.Context, id string) (*domain.Task, error
 	if err != nil {
 		return nil, err
 	}
+	if !task.IsExecutableWork() {
+		return nil, domain.Conflictf("task %q is a %s and is never dispatched to an agent", task.Title, task.Kind)
+	}
 	switch task.Status {
 	case domain.TaskReady, domain.TaskQueued, domain.TaskRunning:
 		s.wake.Fire()
@@ -557,6 +811,9 @@ func (s *TaskService) Retry(ctx context.Context, id string, in RetryInput) (*dom
 	if err != nil {
 		return nil, err
 	}
+	if !task.IsExecutableWork() {
+		return nil, domain.Conflictf("task %q is a %s and is never dispatched to an agent", task.Title, task.Kind)
+	}
 	switch task.Status {
 	case domain.TaskFailed, domain.TaskBlocked, domain.TaskReview, domain.TaskReady, domain.TaskBacklog:
 	default:
@@ -586,7 +843,6 @@ func (s *TaskService) Retry(ctx context.Context, id string, in RetryInput) (*dom
 	}
 	s.deps.publish(ctx, domain.Event{
 		ProjectID: task.ProjectID,
-		IssueID:   task.IssueID,
 		TaskID:    task.ID,
 		Type:      domain.EventTaskRework,
 		Message:   "task retried by operator",
@@ -682,7 +938,6 @@ func (s *TaskService) Reassign(ctx context.Context, id, agentID string) (*domain
 	}
 	s.deps.publish(ctx, domain.Event{
 		ProjectID: task.ProjectID,
-		IssueID:   task.IssueID,
 		TaskID:    task.ID,
 		Type:      domain.EventTaskUpdated,
 		Message:   "task reassigned",
@@ -710,6 +965,9 @@ func (s *TaskService) Move(ctx context.Context, id string, in MoveInput, cancelR
 	task, err := s.deps.Store.Tasks().Get(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if !task.IsExecutableWork() {
+		return nil, domain.Conflictf("task %q is a %s and has no board workflow state", task.Title, task.Kind)
 	}
 	if in.Step != "" {
 		workflow, err := s.projectWorkflow(ctx, task)

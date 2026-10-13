@@ -97,8 +97,8 @@ export function ProjectCard({ project, now }: { project: Project; now?: number }
           <>
             Delete{' '}
             <span className="font-medium text-foreground">{project.name}</span> and all stored data
-            for it (issues, tasks, executions and events)? Git worktrees on disk are kept; remove
-            them manually if you want the space back.
+            for it (tasks, executions and events)? Git worktrees on disk are kept; remove them
+            manually if you want the space back.
           </>
         }
         confirmLabel="Delete project"

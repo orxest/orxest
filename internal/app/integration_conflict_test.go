@@ -52,7 +52,7 @@ func TestIntegrationConflictIsResolvedByAgents(t *testing.T) {
 		t.Fatalf("creating project: %v", err)
 	}
 	project := &bundle.Project
-	task := newIssueAndTask(t, svc, project, "Conflicting change", nil)
+	task := newProjectTask(t, svc, project, "Conflicting change", nil)
 	branch := domain.BranchNameForTask(task.ID)
 
 	// Prepare the task branch from the current target branch, with a change that

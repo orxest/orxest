@@ -58,14 +58,17 @@ type Event struct {
 // ExecutionRequest is the focused context Orxest hands to an agent. It contains
 // exactly what the task needs — never the whole project database (spec §20).
 type ExecutionRequest struct {
-	ExecutionID string              `json:"execution_id"`
-	Project     domain.Project      `json:"project"`
-	Issue       *domain.Issue       `json:"issue,omitempty"`
-	Task        domain.Task         `json:"task"`
-	Workflow    domain.Workflow     `json:"workflow"`
-	Step        domain.WorkflowStep `json:"step"`
-	Role        domain.Role         `json:"role"`
-	Agent       domain.Agent        `json:"agent"`
+	ExecutionID string         `json:"execution_id"`
+	Project     domain.Project `json:"project"`
+	Task        domain.Task    `json:"task"`
+	// Ancestors carries the container chain above the task, outermost first, so
+	// a child execution still receives the broader intent that used to live on
+	// the removed issue.
+	Ancestors []TaskSummary       `json:"ancestors,omitempty"`
+	Workflow  domain.Workflow     `json:"workflow"`
+	Step      domain.WorkflowStep `json:"step"`
+	Role      domain.Role         `json:"role"`
+	Agent     domain.Agent        `json:"agent"`
 
 	// Dependencies are summaries of the tasks this task depends on.
 	Dependencies []TaskSummary `json:"dependencies,omitempty"`

@@ -90,7 +90,6 @@ func (d Deps) decision() ports.DecisionProvider {
 type Service struct {
 	Deps       Deps
 	Projects   *ProjectService
-	Issues     *IssueService
 	Tasks      *TaskService
 	Agents     *AgentService
 	Workflows  *WorkflowService
@@ -107,14 +106,13 @@ func New(deps Deps) *Service {
 	jobs := NewJobRegistry()
 	wake := newTrigger()
 	tasks := NewTaskService(deps, wake)
-	issues := NewIssueService(deps, tasks)
 	workflows := NewWorkflowService(deps)
 	agents := NewAgentService(deps)
 	projects := NewProjectService(deps, workflows, agents, wake)
 	executions := NewExecutionService(deps, jobs, tasks)
 	scheduler := NewScheduler(deps, executions, tasks, wake)
-	engine := NewEngine(deps, tasks, executions, scheduler, issues)
-	planner := NewPlanner(deps, tasks, issues, workflows)
+	engine := NewEngine(deps, tasks, executions, scheduler)
+	planner := NewPlanner(deps, tasks, workflows)
 	eventSvc := NewEventService(deps)
 	engine.SetPlanner(planner)
 	projects.SetExecutions(executions)
@@ -122,7 +120,6 @@ func New(deps Deps) *Service {
 	return &Service{
 		Deps:       deps,
 		Projects:   projects,
-		Issues:     issues,
 		Tasks:      tasks,
 		Agents:     agents,
 		Workflows:  workflows,

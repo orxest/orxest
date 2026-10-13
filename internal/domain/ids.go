@@ -14,7 +14,6 @@ import (
 // an identifier in logs, URLs and persisted event payloads without a lookup.
 const (
 	IDPrefixProject        = "prj"
-	IDPrefixIssue          = "iss"
 	IDPrefixTask           = "tsk"
 	IDPrefixRole           = "rol"
 	IDPrefixAgent          = "agt"
@@ -26,6 +25,14 @@ const (
 	IDPrefixEvent          = "evt"
 	IDPrefixRepository     = "rep"
 )
+
+// LegacyContainerID derives the deterministic identifier migration 0005 uses
+// for the structural container that replaces a legacy issue which owned tasks.
+// It is collision safe because the `_legacy_` infix cannot appear in an
+// identifier produced by NewID, which is always hex after the prefix.
+func LegacyContainerID(issueID string) string {
+	return IDPrefixTask + "_legacy_" + issueID
+}
 
 // idSequence makes identifiers strictly increasing within one process, even
 // when several are created inside the same millisecond. Combined with the

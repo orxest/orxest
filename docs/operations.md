@@ -47,8 +47,9 @@ migrations and exits; `orxest serve` also migrates on startup.
    then pick the target branch, workflow template and one agent per role. If the
    repository cannot be prepared, the project is created with a visible
    "repository is not usable" banner and a fix action, not just a toast.
-4. **Create an issue and tasks manually**, or use *Plan work with architect* to
-   turn a feature request into a proposed issue/task graph. The plan is a draft:
+4. **Add a task manually**, or use *Plan work with architect* to
+   turn a feature request into a proposed task plan (one or more tasks, with
+   optional dependencies and parent/child structure). The plan is a draft:
    review it, then approve (which persists the tasks) or reject (which asks the
    architect again). Set `settings.auto_accept_plans` only if you want validated
    plans to be persisted without that review.
@@ -129,13 +130,13 @@ startup repairs executions that were killed mid-flight.
 | Task is `blocked` because a dependency failed | Fix and retry the dependency; the dependent task resumes automatically once the dependency is done. |
 | Task is `blocked` with an unregistered-harness hint | The agent uses a harness this binary does not provide (check `GET /api/meta` → `harnesses`). |
 | Task is `failed` with *step … used its N attempt(s)* | The retry budget is spent. Fix the underlying problem, then retry with `reset_attempts: true`. |
-| Task is `failed` with *architect output is not a valid plan* | The decomposition agent produced no usable plan JSON. It must return one JSON object with `issue` and `tasks`, and Orxest also looks for the same JSON at `<task worktree>/decomposition/plan.json`, then at `<project repository>/decomposition/plan.json` (the error names every path it tried). Task labels `ref`/`id`/`key`/`task_id` are accepted, acceptance criteria may be a string or a list of strings, and a bare `depends_on` id is treated as a one-element list — so a shape difference alone does not fail a plan. Fix the plan and paste it through *Plan work with architect → Advanced*, or retry the decomposition. |
+| Task is `failed` with *architect output is not a valid plan* | The decomposition agent produced no usable plan JSON. It must return one JSON object with a non-empty `tasks` array (and optional `notes`), and Orxest also looks for the same JSON at `<task worktree>/decomposition/plan.json`, then at `<project repository>/decomposition/plan.json` (the error names every path it tried). Task labels `ref`/`id`/`key`/`task_id` are accepted, parent labels `parent`/`parent_id`/`parent_task` become `parent_ref`, acceptance criteria may be a string or a list of strings, and a bare `depends_on` id is treated as a one-element list — so a shape difference alone does not fail a plan. Fix the plan and paste it through *Plan work with architect → Advanced*, or retry the decomposition. |
 | Execution fails immediately with `environment_failure` | The agent CLI is not on `PATH`, is not authenticated, or the worktree is unusable. Check the execution log and `codex --version` / `pi --version`. |
 | Pi reports `Unknown provider` / `Unknown model` | The agent's `provider`/`model` are not configured in Pi. Run `pi --list-models` (with the same `PI_CODING_AGENT_DIR` Orxest uses) and copy an exact model id. |
 | Pi cannot reach a local model | Check the provider's `baseUrl` in Pi's `models.json` is reachable, for example `curl http://127.0.0.1:8080/v1/models`. |
 | Pi needs GEMINI/ANTHROPIC/OPENAI credentials | Export the provider's API key in the environment that starts Orxest, or set it under `harness.pi.env`. Keys are never stored in the Orxest database. |
 | Pi run ends with a model error but exit code 0 | Pi retries model errors itself and still exits 0; Orxest detects this from Pi's `stopReason`/`auto_retry_end` and fails the execution with an environment failure. Read the execution log for the provider's message. |
-| Board shows tasks in *Backlog* forever | Their dependencies are not done (see the dependency graph), or the issue is unassigned: open the task view for the reason. |
+| Board shows tasks in *Backlog* forever | Their dependencies are not done (see the dependency graph), or the required role has no enabled agent: open the task view for the reason. |
 | Integration conflict (*integration conflict while merging …* / `integration_conflict`) | The task branch and the target branch changed the same lines. The merge was aborted, so the target branch is untouched and the task branch keeps its commits. Resolve it in the task worktree named in the blocked reason: `git merge <target>`, fix the conflicting files, commit, then `POST /api/tasks/{id}/integrate`. Tear down the task instead (`cancel`) if the work is no longer wanted. |
 | Task is `blocked` with *… checked out in … with uncommitted tracked changes* | Your project checkout is on the target branch with modified tracked files, so Orxest will not move the branch under you. Commit, stash or switch that checkout, then run `POST /api/tasks/{id}/integrate`. Untracked files alone never cause this. |
 | Worktree still exists after completion | `keep_worktrees` is on, or the tree is dirty and `require_clean_worktree` is on. Clean it yourself, or set the policy. |

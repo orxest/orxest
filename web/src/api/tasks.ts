@@ -20,6 +20,11 @@ export interface UpdateTaskInput {
   labels?: string[]
   max_attempts?: number
   status?: string
+  /**
+   * Moves the task within the optional hierarchy. The empty string makes it a
+   * top-level task.
+   */
+  parent_task_id?: string
 }
 
 export const tasksApi = {
@@ -32,6 +37,7 @@ export const tasksApi = {
 
   remove: (taskId: string) => request<void>(`/tasks/${taskId}`, { method: 'DELETE' }),
 
+  /** Executable `work` tasks only: a container has no workflow state of its own. */
   start: (taskId: string) => request<Task>(`/tasks/${taskId}/start`, { method: 'POST' }),
 
   retry: (taskId: string, input: RetryTaskInput = {}) =>

@@ -11,7 +11,7 @@ import (
 	"github.com/orxest/orxest/internal/domain/repository"
 )
 
-const executionColumns = `id, project_id, task_id, issue_id, agent_id, agent_name,
+const executionColumns = `id, project_id, task_id, agent_id, agent_name,
 	role_id, workflow_id, workflow_step_id, workflow_step_name, harness, provider,
 	model, reasoning, status, outcome, failure_kind, attempt, prompt, summary, error,
 	result, exit_code, log_path, output_ref, workspace_path, branch_name, commit_sha,
@@ -35,8 +35,8 @@ func (r *executionRepo) Create(ctx context.Context, e *domain.Execution) error {
 	}
 	_, err = r.q.ExecContext(ctx, `
 		INSERT INTO executions (`+executionColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.ProjectID, e.TaskID, e.IssueID, e.AgentID, e.AgentName, e.RoleID,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.ProjectID, e.TaskID, e.AgentID, e.AgentName, e.RoleID,
 		e.WorkflowID, e.WorkflowStepID, e.WorkflowStepName, e.Harness, e.Provider,
 		e.Model, string(e.ReasoningLevel), string(e.Status), string(e.Outcome),
 		string(e.FailureKind), e.Attempt, e.Prompt, e.Summary, e.Error, result,
@@ -79,13 +79,13 @@ func (r *executionRepo) Update(ctx context.Context, e *domain.Execution) error {
 	}
 	res, err := r.q.ExecContext(ctx, `
 		UPDATE executions SET
-			status = ?, outcome = ?, failure_kind = ?, summary = ?, error = ?,
+			status = ?, outcome = ?, failure_kind = ?, prompt = ?, summary = ?, error = ?,
 			result = ?, exit_code = ?, log_path = ?, output_ref = ?, workspace_path = ?,
 			branch_name = ?, commit_sha = ?, commit_subject = ?, changed_files = ?,
 			diff_stat = ?, merged_into_branch = ?, merge_commit_sha = ?, metrics = ?,
 			started_at = ?, finished_at = ?
 		WHERE id = ?`,
-		string(e.Status), string(e.Outcome), string(e.FailureKind), e.Summary, e.Error,
+		string(e.Status), string(e.Outcome), string(e.FailureKind), e.Prompt, e.Summary, e.Error,
 		result, nullInt(e.ExitCode), e.LogPath, e.OutputRef, e.WorkspacePath,
 		e.BranchName, e.CommitSHA, e.CommitSubject, files, e.DiffStat,
 		e.MergedIntoBranch, e.MergeCommitSHA, metrics, nullTime(e.StartedAt), nullTime(e.FinishedAt), e.ID)
@@ -280,7 +280,7 @@ func scanExecution(row rowScanner) (*domain.Execution, error) {
 		startedAt   sql.NullString
 		finishedAt  sql.NullString
 	)
-	if err := row.Scan(&e.ID, &e.ProjectID, &e.TaskID, &e.IssueID, &e.AgentID,
+	if err := row.Scan(&e.ID, &e.ProjectID, &e.TaskID, &e.AgentID,
 		&e.AgentName, &e.RoleID, &e.WorkflowID, &e.WorkflowStepID, &e.WorkflowStepName,
 		&e.Harness, &e.Provider, &e.Model, &reasoning, &status, &outcome, &failureKind,
 		&e.Attempt, &e.Prompt, &e.Summary, &e.Error, &result, &exitCode, &e.LogPath,

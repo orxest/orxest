@@ -77,18 +77,11 @@ func newProject(t *testing.T, svc *app.Service, repo string) *domain.Project {
 	return &bundle.Project
 }
 
-func newIssueAndTask(t *testing.T, svc *app.Service, project *domain.Project, title string, dependsOn []string) *domain.Task {
+// newProjectTask creates one task directly in a project. There is no issue to
+// create first, which is the point of the task-centric model.
+func newProjectTask(t *testing.T, svc *app.Service, project *domain.Project, title string, dependsOn []string) *domain.Task {
 	t.Helper()
-	ctx := context.Background()
-	issue, err := svc.Issues.Create(ctx, project.ID, app.CreateIssueInput{
-		Title:       "JWT Authentication",
-		Description: "Add JWT authentication to the API.",
-		Priority:    domain.PriorityHigh,
-	})
-	if err != nil {
-		t.Fatalf("creating issue: %v", err)
-	}
-	task, err := svc.Tasks.Create(ctx, issue.ID, app.CreateTaskInput{
+	task, err := svc.Tasks.Create(context.Background(), project.ID, app.CreateTaskInput{
 		Title:              title,
 		Description:        "Implement " + title,
 		Priority:           domain.PriorityHigh,
@@ -134,7 +127,7 @@ func TestAcceptanceScenario(t *testing.T) {
 	)
 	svc := testsupport.Service(t, testsupport.Options{Harnesses: harnesses(harness)})
 	project := newProject(t, svc, repo)
-	task := newIssueAndTask(t, svc, project, "Implement JWT authentication", nil)
+	task := newProjectTask(t, svc, project, "Implement JWT authentication", nil)
 
 	// The scheduler must pick the task up and drive it into the review gate.
 	drive(t, svc, "task to reach review", func() bool {
@@ -221,13 +214,16 @@ func TestAcceptanceScenario(t *testing.T) {
 		t.Errorf("expected the task worktree %s to be removed, stat err=%v", worktree, err)
 	}
 
-	// The issue is a projection of task state and must be closed.
-	issue, err := svc.Issues.Get(ctx, task.IssueID)
+	// The task is the authoritative projection of its own workflow state.
+	finished, err := svc.Tasks.Get(ctx, task.ID)
 	if err != nil {
-		t.Fatalf("loading issue: %v", err)
+		t.Fatalf("loading task: %v", err)
 	}
-	if issue.Status != domain.IssueStatusDone {
-		t.Errorf("expected the issue to be done, got %s", issue.Status)
+	if finished.Status != domain.TaskDone {
+		t.Errorf("expected the task to be done, got %s", finished.Status)
+	}
+	if !finished.IsExecutableWork() {
+		t.Errorf("expected an executable work task, got kind %q", finished.Kind)
 	}
 }
 
@@ -240,8 +236,8 @@ func TestDependencyGatingRejectsCycles(t *testing.T) {
 	svc := testsupport.Service(t, testsupport.Options{Harnesses: harnesses(harness)})
 	project := newProject(t, svc, repo)
 
-	first := newIssueAndTask(t, svc, project, "Design authentication", nil)
-	second := newIssueAndTask(t, svc, project, "Implement authentication API", []string{first.ID})
+	first := newProjectTask(t, svc, project, "Design authentication", nil)
+	second := newProjectTask(t, svc, project, "Implement authentication API", []string{first.ID})
 
 	// The dependent task must not run while the first one is incomplete.
 	drive(t, svc, "first task to reach review", func() bool {
@@ -280,7 +276,7 @@ func TestSchedulerBlocksWhenNoAgentIsConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Implement something", nil)
+	task := newProjectTask(t, svc, &project.Project, "Implement something", nil)
 
 	drive(t, svc, "task to be blocked", func() bool {
 		return loadTask(t, svc, task.ID).Status == domain.TaskBlocked
@@ -327,7 +323,7 @@ func TestBlockedTasksRecoverAutomatically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Waiting for an agent", nil)
+	task := newProjectTask(t, svc, &project.Project, "Waiting for an agent", nil)
 
 	drive(t, svc, "the task to be blocked by policy", func() bool {
 		blocked := loadTask(t, svc, task.ID)
@@ -367,8 +363,8 @@ func TestDependentRecoversWhenDependencyIsRetried(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	first := newIssueAndTask(t, svc, &project.Project, "Flaky dependency", nil)
-	second := newIssueAndTask(t, svc, &project.Project, "Dependent work", []string{first.ID})
+	first := newProjectTask(t, svc, &project.Project, "Flaky dependency", nil)
+	second := newProjectTask(t, svc, &project.Project, "Dependent work", []string{first.ID})
 
 	// A single-attempt budget makes the dependency fail immediately instead of
 	// retrying within the same scripted failure.
@@ -426,7 +422,7 @@ func TestRetryBudgetExhaustion(t *testing.T) {
 	if project.Project.Settings.DefaultMaxAttempts != 3 {
 		t.Fatalf("expected a default retry budget of 3, got %d", project.Project.Settings.DefaultMaxAttempts)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Never compiles", nil)
+	task := newProjectTask(t, svc, &project.Project, "Never compiles", nil)
 
 	drive(t, svc, "task to fail", func() bool {
 		return loadTask(t, svc, task.ID).Status == domain.TaskFailed
@@ -478,7 +474,7 @@ func TestCancelRunningTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating project: %v", err)
 	}
-	task := newIssueAndTask(t, svc, &project.Project, "Long running work", nil)
+	task := newProjectTask(t, svc, &project.Project, "Long running work", nil)
 
 	drive(t, svc, "task to start running", func() bool {
 		return loadTask(t, svc, task.ID).Status == domain.TaskRunning

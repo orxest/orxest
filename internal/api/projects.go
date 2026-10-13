@@ -187,13 +187,25 @@ type boardColumn struct {
 }
 
 type boardResponse struct {
-	Project      domain.Project            `json:"project"`
-	Workflow     *domain.Workflow          `json:"workflow,omitempty"`
-	Columns      []boardColumn             `json:"columns"`
-	Issues       []domain.Issue            `json:"issues"`
+	Project  domain.Project   `json:"project"`
+	Workflow *domain.Workflow `json:"workflow,omitempty"`
+	Columns  []boardColumn    `json:"columns"`
+	// Containers are the structural parents of the board's work tasks. Their
+	// progress is derived and read-only.
+	Containers []containerView `json:"containers"`
+	// PlanningJobs are internal architect records. They are reported separately
+	// so they are never counted as project work.
+	PlanningJobs []domain.Task             `json:"planning_jobs"`
 	Stats        *app.ProjectStats         `json:"stats"`
 	Dependencies map[string][]string       `json:"dependencies"`
 	Agents       []domain.ProjectAgentView `json:"agents"`
+}
+
+// containerView is a container plus the derived progress of its descendants.
+type containerView struct {
+	Task     domain.Task             `json:"task"`
+	Children []domain.Task           `json:"children"`
+	Progress repository.TaskProgress `json:"progress"`
 }
 
 func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
@@ -204,12 +216,14 @@ func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	tasks, err := s.svc.Tasks.List(ctx, repository.TaskFilter{ProjectID: projectID})
+	// The board shows user-visible work and the containers that group it, never
+	// the internal planning records.
+	tasks, err := s.svc.Tasks.BoardTasks(ctx, projectID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	issues, err := s.svc.Issues.List(ctx, repository.IssueFilter{ProjectID: projectID})
+	planningJobs, err := s.svc.Tasks.PlanningTasks(ctx, projectID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -248,18 +262,34 @@ func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
 			index[st] = i
 		}
 	}
+	containers := []containerView{}
 	for _, t := range tasks {
+		if t.IsContainer() {
+			view := containerView{Task: t, Children: []domain.Task{}}
+			if children, err := s.svc.Tasks.Children(ctx, t.ID); err == nil {
+				view.Children = children
+			}
+			if progress, err := s.svc.Tasks.Progress(ctx, t.ID); err == nil {
+				view.Progress = progress
+			}
+			containers = append(containers, view)
+			continue
+		}
 		if i, ok := index[string(t.Status)]; ok {
 			columns[i].Tasks = append(columns[i].Tasks, t)
 			continue
 		}
 		columns[0].Tasks = append(columns[0].Tasks, t)
 	}
+	if planningJobs == nil {
+		planningJobs = []domain.Task{}
+	}
 	s.writeJSON(w, http.StatusOK, boardResponse{
 		Project:      *project,
 		Workflow:     workflow,
 		Columns:      columns,
-		Issues:       issues,
+		Containers:   containers,
+		PlanningJobs: planningJobs,
 		Stats:        stats,
 		Dependencies: graph,
 		Agents:       agents,

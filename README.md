@@ -8,14 +8,13 @@ state and drives tasks through configurable development workflows.
 
 ```text
 Project
-  └── Issues
-       └── Tasks
-            └── Workflow
-                 └── Workflow Steps
-                      └── Agent assigned by Role
-                           └── Harness
-                                └── Model
-                                     └── Execution
+  └── Tasks (optional parent/child decomposition)
+       └── Workflow
+            └── Workflow Steps
+                 └── Agent assigned by Role
+                      └── Harness
+                           └── Model
+                                └── Execution
 ```
 
 > **Agents perform work. Orxest decides how work moves through the system.**
@@ -25,13 +24,15 @@ required at each stage, and Orxest selects an agent configured for that role
 (multiple agents in one role are alternative workers, chosen deterministically
 by priority and availability — not by task complexity).
 
-Each **task** owns one Git branch and one worktree. Sequential executions and
-rework for the same task share that workspace, so later stages see earlier
-changes; different tasks never share one. Every execution is an append-only
-history record with its own agent, model and outcome, persisted in SQLite (the
-history is lost if the database is deleted).
+Each executable **task** owns one Git branch and one worktree; a structural
+**container** that groups child tasks is never dispatched, so it has no branch or
+worktree of its own. Sequential executions and rework for the same task share
+that workspace, so later stages see earlier changes; different tasks never share
+one. Every execution is an append-only history record with its own agent, model
+and outcome, persisted in SQLite (the history is lost if the database is
+deleted).
 
-- Full specification: [`orxest-implementation-spec.md`](orxest-implementation-spec.md)
+- Full specification: [`orxest-implementation-spec.md`](docs/orxest-implementation-spec.md)
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
 - Configuration: [`docs/configuration.md`](docs/configuration.md)
 - Operations guide: [`docs/operations.md`](docs/operations.md)
@@ -56,8 +57,9 @@ make build
 
 # 3. Configure at least one agent, then create a project in the web UI.
 
-# 4. Create an issue (manual tasks) or use "Plan work with architect" to turn a
-#    feature request into a validated, reviewable issue/task graph.
+# 4. Add a task manually, or use "Plan work with architect" to turn a feature
+#    request into a validated, reviewable plan of one or more tasks (optional
+#    dependencies and parent/child structure).
 ```
 
 Orxest needs agents to do anything. An agent configuration combines a harness, a
@@ -127,17 +129,18 @@ it; Orxest commits the work on its behalf so integration is still exercised.
 | Capability | Status |
 | --- | --- |
 | Projects from an existing repository or a brand-new one | yes |
-| Issues, tasks, task dependency DAG (cycles rejected) | yes |
+| Project-level tasks, optional parent/child containers with derived progress, task dependency DAG (cycles rejected) | yes |
+| Optional task labels (for example `bug`, `feature`, `documentation`) that never gate validation or scheduling | yes |
 | Roles, reusable agent configurations, per-project role assignment | yes |
 | Configurable workflows with success/failure/rework transitions and approval gates | yes |
 | Deterministic dependency-aware scheduler with global/project/agent concurrency limits | yes |
-| One Git worktree + branch per task, non-destructive integration, safe cleanup | yes |
+| One Git worktree + branch per executable task, non-destructive integration, safe cleanup | yes |
 | Harness adapters: Codex and Pi (JSON streaming, structured output, cancellation, timeouts, token/cost capture) | yes |
 | Append-only execution history and per-execution event log | yes |
 | Retry budgets, rework loops, review approval/rejection, human control actions | yes |
 | Clean-merge integration with an explicit conflict state | yes |
 | REST API + SSE streams + generated OpenAPI document | yes |
-| Architect-driven planning: a validated issue/task/dependency draft you approve or reject | yes |
+| Architect-driven planning: a validated task/dependency/hierarchy draft you approve or reject | yes |
 | Web UI: dashboard, board, task view, execution/log view, agents, workflows | yes |
 | Optional decision provider (disabled by default, deterministic policies) | yes |
 | GitHub/PR integration, cost optimisation, more harness adapters | planned (phase 2) |
@@ -188,10 +191,11 @@ a decomposition task whose architect output becomes a **draft** plan (the prompt
 asks for the plan JSON as the only result and also for a copy at
 `decomposition/plan.json`, which Orxest falls back to when a harness cannot
 return structured output). Approving
-it (`POST /api/tasks/{id}/approve`) creates the issues/tasks/dependencies;
-rejecting it (`POST /api/tasks/{id}/reject`) asks the architect again. A project
-can opt into `settings.auto_accept_plans` to persist validated plans without
-review. The architect is never a mandatory step of the per-task workflow.
+it (`POST /api/tasks/{id}/approve`) creates the tasks, dependencies and optional
+containers; rejecting it (`POST /api/tasks/{id}/reject`) asks the architect
+again. A project can opt into `settings.auto_accept_plans` to persist validated
+plans without review. The architect is never a mandatory step of the per-task
+workflow.
 
 ## Licence
 

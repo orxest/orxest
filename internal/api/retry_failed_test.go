@@ -36,16 +36,9 @@ func TestRetryFailedProjectTasks(t *testing.T) {
 	}, http.StatusCreated, &bundle)
 	projectID := bundle.Project.ID
 
-	var issue domain.Issue
-	env.expect("POST", "/api/projects/"+projectID+"/issues", map[string]any{
-		"title":       "Ship the feature",
-		"description": "One issue holding every task of this test.",
-		"priority":    2,
-	}, http.StatusCreated, &issue)
-
 	// A task that really fails: its retry budget is spent when it gives up.
 	var exhausted domain.Task
-	env.expect("POST", "/api/issues/"+issue.ID+"/tasks", map[string]any{
+	env.expect("POST", "/api/projects/"+projectID+"/tasks", map[string]any{
 		"title":               "Fails every attempt",
 		"description":         "Retried until the budget is spent.",
 		"acceptance_criteria": "Never succeeds",
@@ -65,13 +58,13 @@ func TestRetryFailedProjectTasks(t *testing.T) {
 	// A second failed task without any execution, and a backlog task that the
 	// reset must not touch.
 	var second domain.Task
-	env.expect("POST", "/api/issues/"+issue.ID+"/tasks", map[string]any{
+	env.expect("POST", "/api/projects/"+projectID+"/tasks", map[string]any{
 		"title":       "Already failed",
 		"description": "Failed without running.",
 		"status":      string(domain.TaskFailed),
 	}, http.StatusCreated, &second)
 	var backlog domain.Task
-	env.expect("POST", "/api/issues/"+issue.ID+"/tasks", map[string]any{
+	env.expect("POST", "/api/projects/"+projectID+"/tasks", map[string]any{
 		"title":       "Not failed",
 		"description": "Still waiting its turn.",
 	}, http.StatusCreated, &backlog)

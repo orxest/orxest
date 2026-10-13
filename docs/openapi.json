@@ -131,67 +131,9 @@
         ],
         "type": "object"
       },
-      "ArchitectIssue": {
-        "additionalProperties": false,
-        "properties": {
-          "acceptance_criteria": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "labels": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "priority": {
-            "type": "integer"
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "title",
-          "description",
-          "priority"
-        ],
-        "type": "object"
-      },
       "ArchitectPlan": {
         "additionalProperties": false,
         "properties": {
-          "issue": {
-            "additionalProperties": false,
-            "properties": {
-              "acceptance_criteria": {
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              },
-              "labels": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "priority": {
-                "type": "integer"
-              },
-              "title": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "title",
-              "description",
-              "priority"
-            ],
-            "type": "object"
-          },
           "notes": {
             "type": "string"
           },
@@ -229,6 +171,9 @@
                 "order_index": {
                   "type": "integer"
                 },
+                "parent_ref": {
+                  "type": "string"
+                },
                 "priority": {
                   "type": "integer"
                 },
@@ -251,7 +196,6 @@
           }
         },
         "required": [
-          "issue",
           "tasks"
         ],
         "type": "object"
@@ -288,6 +232,9 @@
           },
           "order_index": {
             "type": "integer"
+          },
+          "parent_ref": {
+            "type": "string"
           },
           "priority": {
             "type": "integer"
@@ -709,41 +656,6 @@
         ],
         "type": "object"
       },
-      "CreateIssueInput": {
-        "additionalProperties": false,
-        "properties": {
-          "acceptance_criteria": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "labels": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "priority": {
-            "type": "integer"
-          },
-          "status": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "title",
-          "description",
-          "priority",
-          "labels",
-          "acceptance_criteria",
-          "status"
-        ],
-        "type": "object"
-      },
       "CreateProjectInput": {
         "additionalProperties": false,
         "properties": {
@@ -1017,8 +929,14 @@
             "type": "integer"
           },
           "order_index": {},
+          "parent_task_id": {
+            "type": "string"
+          },
           "priority": {
             "type": "integer"
+          },
+          "source": {
+            "type": "string"
           },
           "status": {
             "type": "string"
@@ -1040,6 +958,8 @@
           "max_attempts",
           "kind",
           "status",
+          "parent_task_id",
+          "source",
           "depends_on",
           "agent_id"
         ],
@@ -1051,44 +971,12 @@
           "agent_id": {
             "type": "string"
           },
-          "issue_id": {
-            "type": "string"
-          },
           "max_attempts": {
             "type": "integer"
           },
           "plan": {
             "additionalProperties": false,
             "properties": {
-              "issue": {
-                "additionalProperties": false,
-                "properties": {
-                  "acceptance_criteria": {
-                    "type": "string"
-                  },
-                  "description": {
-                    "type": "string"
-                  },
-                  "labels": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "priority": {
-                    "type": "integer"
-                  },
-                  "title": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "title",
-                  "description",
-                  "priority"
-                ],
-                "type": "object"
-              },
               "notes": {
                 "type": "string"
               },
@@ -1126,6 +1014,9 @@
                     "order_index": {
                       "type": "integer"
                     },
+                    "parent_ref": {
+                      "type": "string"
+                    },
                     "priority": {
                       "type": "integer"
                     },
@@ -1148,7 +1039,6 @@
               }
             },
             "required": [
-              "issue",
               "tasks"
             ]
           },
@@ -1165,7 +1055,6 @@
         "required": [
           "request",
           "title",
-          "issue_id",
           "priority",
           "agent_id",
           "max_attempts"
@@ -1219,9 +1108,6 @@
                 "id": {
                   "type": "string"
                 },
-                "issue_id": {
-                  "type": "string"
-                },
                 "kind": {
                   "type": "string"
                 },
@@ -1240,6 +1126,9 @@
                 "order_index": {
                   "type": "integer"
                 },
+                "parent_task_id": {
+                  "type": "string"
+                },
                 "preferred_agent_id": {
                   "type": "string"
                 },
@@ -1247,6 +1136,9 @@
                   "type": "integer"
                 },
                 "project_id": {
+                  "type": "string"
+                },
+                "source": {
                   "type": "string"
                 },
                 "started_at": {
@@ -1272,7 +1164,6 @@
               "required": [
                 "id",
                 "project_id",
-                "issue_id",
                 "title",
                 "description",
                 "priority",
@@ -1280,6 +1171,7 @@
                 "acceptance_criteria",
                 "labels",
                 "kind",
+                "source",
                 "workflow_id",
                 "current_workflow_step",
                 "attempt_count",
@@ -1336,9 +1228,6 @@
               "id": {
                 "type": "string"
               },
-              "issue_id": {
-                "type": "string"
-              },
               "kind": {
                 "type": "string"
               },
@@ -1357,6 +1246,9 @@
               "order_index": {
                 "type": "integer"
               },
+              "parent_task_id": {
+                "type": "string"
+              },
               "preferred_agent_id": {
                 "type": "string"
               },
@@ -1364,6 +1256,9 @@
                 "type": "integer"
               },
               "project_id": {
+                "type": "string"
+              },
+              "source": {
                 "type": "string"
               },
               "started_at": {
@@ -1389,7 +1284,6 @@
             "required": [
               "id",
               "project_id",
-              "issue_id",
               "title",
               "description",
               "priority",
@@ -1397,6 +1291,7 @@
               "acceptance_criteria",
               "labels",
               "kind",
+              "source",
               "workflow_id",
               "current_workflow_step",
               "attempt_count",
@@ -1407,64 +1302,10 @@
               "updated_at"
             ]
           },
-          "issue": {
-            "additionalProperties": false,
-            "properties": {
-              "acceptance_criteria": {
-                "type": "string"
-              },
-              "created_at": {
-                "format": "date-time",
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              },
-              "id": {
-                "type": "string"
-              },
-              "labels": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "priority": {
-                "type": "integer"
-              },
-              "project_id": {
-                "type": "string"
-              },
-              "source": {
-                "type": "string"
-              },
-              "status": {
-                "type": "string"
-              },
-              "title": {
-                "type": "string"
-              },
-              "updated_at": {
-                "format": "date-time",
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "project_id",
-              "title",
-              "description",
-              "priority",
-              "status",
-              "labels",
-              "acceptance_criteria",
-              "source",
-              "created_at",
-              "updated_at"
-            ],
-            "type": "object"
-          },
           "mode": {
+            "type": "string"
+          },
+          "notes": {
             "type": "string"
           },
           "workflow": {
@@ -1562,7 +1403,6 @@
           }
         },
         "required": [
-          "issue",
           "mode"
         ],
         "type": "object"
@@ -1604,9 +1444,6 @@
             "type": "string"
           },
           "id": {
-            "type": "string"
-          },
-          "issue_id": {
             "type": "string"
           },
           "message": {
@@ -1681,9 +1518,6 @@
             "type": "string"
           },
           "id": {
-            "type": "string"
-          },
-          "issue_id": {
             "type": "string"
           },
           "log_path": {
@@ -1779,7 +1613,6 @@
           "id",
           "project_id",
           "task_id",
-          "issue_id",
           "agent_id",
           "agent_name",
           "role_id",
@@ -1837,63 +1670,6 @@
           "message",
           "seq",
           "created_at"
-        ],
-        "type": "object"
-      },
-      "Issue": {
-        "additionalProperties": false,
-        "properties": {
-          "acceptance_criteria": {
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "labels": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "priority": {
-            "type": "integer"
-          },
-          "project_id": {
-            "type": "string"
-          },
-          "source": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "project_id",
-          "title",
-          "description",
-          "priority",
-          "status",
-          "labels",
-          "acceptance_criteria",
-          "source",
-          "created_at",
-          "updated_at"
         ],
         "type": "object"
       },
@@ -1984,9 +1760,6 @@
                   "type": "string"
                 },
                 "id": {
-                  "type": "string"
-                },
-                "issue_id": {
                   "type": "string"
                 },
                 "log_path": {
@@ -2082,7 +1855,6 @@
                 "id",
                 "project_id",
                 "task_id",
-                "issue_id",
                 "agent_id",
                 "agent_name",
                 "role_id",
@@ -2944,13 +2716,10 @@
       "ProjectStats": {
         "additionalProperties": false,
         "properties": {
-          "issue_status": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object"
+          "containers": {
+            "type": "integer"
           },
-          "issues": {
+          "planning_jobs": {
             "type": "integer"
           },
           "running_executions": {
@@ -2967,10 +2736,10 @@
           }
         },
         "required": [
-          "issues",
           "tasks",
           "task_status",
-          "issue_status",
+          "containers",
+          "planning_jobs",
           "running_executions"
         ],
         "type": "object"
@@ -3111,9 +2880,6 @@
                 "id": {
                   "type": "string"
                 },
-                "issue_id": {
-                  "type": "string"
-                },
                 "kind": {
                   "type": "string"
                 },
@@ -3132,6 +2898,9 @@
                 "order_index": {
                   "type": "integer"
                 },
+                "parent_task_id": {
+                  "type": "string"
+                },
                 "preferred_agent_id": {
                   "type": "string"
                 },
@@ -3139,6 +2908,9 @@
                   "type": "integer"
                 },
                 "project_id": {
+                  "type": "string"
+                },
+                "source": {
                   "type": "string"
                 },
                 "started_at": {
@@ -3164,7 +2936,6 @@
               "required": [
                 "id",
                 "project_id",
-                "issue_id",
                 "title",
                 "description",
                 "priority",
@@ -3172,6 +2943,7 @@
                 "acceptance_criteria",
                 "labels",
                 "kind",
+                "source",
                 "workflow_id",
                 "current_workflow_step",
                 "attempt_count",
@@ -3446,9 +3218,6 @@
           "id": {
             "type": "string"
           },
-          "issue_id": {
-            "type": "string"
-          },
           "kind": {
             "type": "string"
           },
@@ -3467,6 +3236,9 @@
           "order_index": {
             "type": "integer"
           },
+          "parent_task_id": {
+            "type": "string"
+          },
           "preferred_agent_id": {
             "type": "string"
           },
@@ -3474,6 +3246,9 @@
             "type": "integer"
           },
           "project_id": {
+            "type": "string"
+          },
+          "source": {
             "type": "string"
           },
           "started_at": {
@@ -3499,7 +3274,6 @@
         "required": [
           "id",
           "project_id",
-          "issue_id",
           "title",
           "description",
           "priority",
@@ -3507,6 +3281,7 @@
           "acceptance_criteria",
           "labels",
           "kind",
+          "source",
           "workflow_id",
           "current_workflow_step",
           "attempt_count",
@@ -3537,22 +3312,6 @@
           "depends_on_task_id",
           "created_at"
         ],
-        "type": "object"
-      },
-      "UpdateIssueInput": {
-        "additionalProperties": false,
-        "properties": {
-          "acceptance_criteria": {},
-          "description": {},
-          "labels": {
-            "items": {
-              "type": "string"
-            }
-          },
-          "priority": {},
-          "status": {},
-          "title": {}
-        },
         "type": "object"
       },
       "UpdateProjectInput": {
@@ -3623,6 +3382,7 @@
             }
           },
           "max_attempts": {},
+          "parent_task_id": {},
           "priority": {},
           "status": {},
           "title": {}
@@ -3854,7 +3614,7 @@
     }
   },
   "info": {
-    "description": "Orxest is a project-centric orchestration platform for AI-assisted software development. Agents perform work; Orxest decides how work moves through the system. Projects own issues, tasks and a workflow; the workflow selects role-based agents for each step, the scheduler runs them in isolated Git worktrees, and every attempt is preserved as an execution.",
+    "description": "Orxest is a project-centric orchestration platform for AI-assisted software development. Agents perform work; Orxest decides how work moves through the system. Projects own tasks and a workflow; a task is the single user-visible work item, a workflow step selects the scheduler runs them in isolated Git worktrees, and every attempt is preserved as an execution.",
     "license": {
       "name": "MIT"
     },
@@ -4811,388 +4571,6 @@
         "summary": "Service health and version",
         "tags": [
           "system"
-        ]
-      }
-    },
-    "/api/issues/{id}": {
-      "delete": {
-        "parameters": [
-          {
-            "description": "Issue id",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Success"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Conflicting state"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Internal error"
-          }
-        },
-        "summary": "Delete an issue",
-        "tags": [
-          "issues"
-        ]
-      },
-      "get": {
-        "parameters": [
-          {
-            "description": "Issue id",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Issue"
-                }
-              }
-            },
-            "description": "Success"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Conflicting state"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Internal error"
-          }
-        },
-        "summary": "Get an issue",
-        "tags": [
-          "issues"
-        ]
-      },
-      "patch": {
-        "parameters": [
-          {
-            "description": "Issue id",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateIssueInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Issue"
-                }
-              }
-            },
-            "description": "Success"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Conflicting state"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Internal error"
-          }
-        },
-        "summary": "Update an issue",
-        "tags": [
-          "issues"
-        ]
-      }
-    },
-    "/api/issues/{id}/tasks": {
-      "get": {
-        "parameters": [
-          {
-            "description": "Issue id",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/Task"
-                  },
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Success"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Conflicting state"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Internal error"
-          }
-        },
-        "summary": "List the tasks of an issue",
-        "tags": [
-          "issues"
-        ]
-      },
-      "post": {
-        "parameters": [
-          {
-            "description": "Issue id",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateTaskInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Task"
-                }
-              }
-            },
-            "description": "Success"
-          },
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Task"
-                }
-              }
-            },
-            "description": "Created"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Conflicting state"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Internal error"
-          }
-        },
-        "summary": "Create a task in an issue",
-        "tags": [
-          "issues"
         ]
       }
     },
@@ -6243,7 +5621,7 @@
             "description": "Internal error"
           }
         },
-        "summary": "Kanban board, issues, statistics and dependency graph",
+        "summary": "Kanban board of project tasks, containers with derived progress, planning jobs, statistics and dependency graph",
         "tags": [
           "projects"
         ]
@@ -6574,178 +5952,6 @@
         "summary": "Persisted activity of a project",
         "tags": [
           "events"
-        ]
-      }
-    },
-    "/api/projects/{id}/issues": {
-      "get": {
-        "parameters": [
-          {
-            "description": "Project id",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter by status",
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/Issue"
-                  },
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Success"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Conflicting state"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Internal error"
-          }
-        },
-        "summary": "List issues",
-        "tags": [
-          "issues"
-        ]
-      },
-      "post": {
-        "parameters": [
-          {
-            "description": "Project id",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateIssueInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Issue"
-                }
-              }
-            },
-            "description": "Success"
-          },
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Issue"
-                }
-              }
-            },
-            "description": "Created"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Invalid request"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Conflicting state"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Internal error"
-          }
-        },
-        "summary": "Create an issue",
-        "tags": [
-          "issues"
         ]
       }
     },
@@ -7298,6 +6504,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "List internal architect planning records instead",
+            "in": "query",
+            "name": "planning",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -7355,7 +6570,96 @@
             "description": "Internal error"
           }
         },
-        "summary": "List the tasks of a project",
+        "summary": "List the tasks of a project (user-visible work plus containers; planning=true lists internal planning records)",
+        "tags": [
+          "tasks"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "description": "Project id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTaskInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflicting state"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          }
+        },
+        "summary": "Create a task directly in a project",
         "tags": [
           "tasks"
         ]
@@ -8495,7 +7799,7 @@
             "description": "Internal error"
           }
         },
-        "summary": "Full task view: issue, workflow, agent, executions and events",
+        "summary": "Full task view: project, parent/children, workflow, agent, executions and events",
         "tags": [
           "tasks"
         ]
@@ -9333,10 +8637,6 @@
     {
       "description": "Project lifecycle, board and repository state.",
       "name": "projects"
-    },
-    {
-      "description": "Product level work items.",
-      "name": "issues"
     },
     {
       "description": "Executable units of work, dependencies and human control.",

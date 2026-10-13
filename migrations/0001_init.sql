@@ -237,7 +237,7 @@ CREATE INDEX IF NOT EXISTS idx_events_task ON events (task_id, created_at);
 -- Built-in roles. They are seeded here so that a fresh database is immediately
 -- usable; roles are ordinary rows and projects may add their own.
 INSERT OR IGNORE INTO roles (id, name, description, built_in, created_at, updated_at) VALUES
-    ('architect',        'Architect',        'Decomposes product intent into issues, tasks, dependencies and acceptance criteria.', 1, '1970-01-01T00:00:00.000000000Z', '1970-01-01T00:00:00.000000000Z'),
+    ('architect',        'Architect',        'Decomposes product intent into tasks, dependencies, optional hierarchy and acceptance criteria.', 1, '1970-01-01T00:00:00.000000000Z', '1970-01-01T00:00:00.000000000Z'),
     ('senior-developer', 'Senior Developer', 'Implements complex changes and reworks rejected work.',                            1, '1970-01-01T00:00:00.000000000Z', '1970-01-01T00:00:00.000000000Z'),
     ('junior-developer', 'Junior Developer', 'Implements well specified, low risk changes.',                                     1, '1970-01-01T00:00:00.000000000Z', '1970-01-01T00:00:00.000000000Z'),
     ('developer',        'Developer',        'Generic implementation role for lightweight workflows.',                           1, '1970-01-01T00:00:00.000000000Z', '1970-01-01T00:00:00.000000000Z'),

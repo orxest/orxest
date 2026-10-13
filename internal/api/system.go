@@ -97,7 +97,6 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 func eventTypes() []string {
 	return []string{
 		domain.EventProjectCreated, domain.EventProjectUpdated,
-		domain.EventIssueCreated, domain.EventIssueUpdated,
 		domain.EventTaskCreated, domain.EventTaskUpdated, domain.EventTaskReady,
 		domain.EventTaskQueued, domain.EventTaskStarted, domain.EventTaskProgress,
 		domain.EventTaskCompleted, domain.EventTaskFailed, domain.EventTaskBlocked,

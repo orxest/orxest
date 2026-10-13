@@ -7,26 +7,31 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { RejectDialog } from '@/features/board/RejectDialog'
-import { architectPlanSchema, type PlanIssue } from '@/features/issues/issueForm'
+import {
+  planHasHierarchy,
+  planTree,
+  validatePlan,
+  type PlanNode,
+  type PlanProblem,
+} from '@/features/tasks/architectPlan'
 import { useTaskActions } from '@/hooks/mutations'
 import { cn } from '@/lib/utils'
-import type { ArchitectPlan, Task } from '@/types'
+import type { ArchitectPlan, ArchitectTask, Task } from '@/types'
 
 /**
  * Plan validation problems grouped by the row they belong to. Paths follow the
- * backend/JSON shape: `issue.title`, `tasks.2.title`, `tasks.2.depends_on.0`.
+ * backend/JSON shape: `tasks.2.title`, `tasks.2.depends_on.0`,
+ * `tasks.2.parent_ref`.
  */
 export interface GroupedPlanProblems {
-  issue: PlanIssue[]
-  tasks: Map<number, PlanIssue[]>
+  tasks: Map<number, PlanProblem[]>
   /** Dependency problems keyed by `${taskIndex}:${dependencyIndex}`. */
-  edges: Map<string, PlanIssue[]>
-  other: PlanIssue[]
+  edges: Map<string, PlanProblem[]>
+  other: PlanProblem[]
 }
 
-export function groupPlanProblems(problems: PlanIssue[]): GroupedPlanProblems {
+export function groupPlanProblems(problems: PlanProblem[]): GroupedPlanProblems {
   const grouped: GroupedPlanProblems = {
-    issue: [],
     tasks: new Map(),
     edges: new Map(),
     other: [],
@@ -43,24 +48,20 @@ export function groupPlanProblems(problems: PlanIssue[]): GroupedPlanProblems {
       }
       continue
     }
-    if (problem.path.startsWith('issue')) {
-      grouped.issue.push(problem)
-      continue
-    }
     grouped.other.push(problem)
   }
   return grouped
 }
 
 /** Turns a row-scoped API error into a plan problem so it renders inline. */
-function errorPlanProblem(error: unknown): PlanIssue[] {
+function errorPlanProblem(error: unknown): PlanProblem[] {
   if (error instanceof ApiError && error.field) {
     return [{ path: error.field, message: error.message }]
   }
   return []
 }
 
-function ProblemList({ problems }: { problems: PlanIssue[] }) {
+function ProblemList({ problems }: { problems: PlanProblem[] }) {
   if (problems.length === 0) return null
   return (
     <ul className="flex flex-col gap-0.5">
@@ -73,11 +74,112 @@ function ProblemList({ problems }: { problems: PlanIssue[] }) {
   )
 }
 
+function PlanTaskCard({
+  task,
+  index,
+  problems,
+  edges,
+  isContainer,
+  depth,
+}: {
+  task: ArchitectTask
+  index: number
+  problems: PlanProblem[]
+  edges: Map<string, PlanProblem[]>
+  isContainer: boolean
+  depth: number
+}) {
+  const dependencies = task.depends_on ?? []
+  return (
+    <div
+      className={cn(
+        'flex flex-col gap-1.5 rounded-md border p-2.5',
+        problems.length > 0 ? 'border-destructive/50' : 'border-border',
+        isContainer && 'bg-muted/30',
+      )}
+      style={depth > 0 ? { marginLeft: `${Math.min(depth, 4) * 16}px` } : undefined}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-[11px] text-muted-foreground">{task.ref}</span>
+        <span className="min-w-0 flex-1 text-xs font-medium">{task.title}</span>
+        {isContainer ? (
+          <Badge variant="purple" title="Structural parent: it groups the tasks nested below it">
+            container
+          </Badge>
+        ) : null}
+        {task.priority !== undefined ? <PriorityBadge priority={task.priority} /> : null}
+        {task.estimated_complexity ? (
+          <Badge variant="outline">{task.estimated_complexity}</Badge>
+        ) : null}
+        {task.order_index !== undefined ? (
+          <Badge variant="muted" className="font-mono">
+            #{task.order_index}
+          </Badge>
+        ) : null}
+      </div>
+
+      {task.description ? (
+        <p className="max-w-none whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground">
+          {task.description}
+        </p>
+      ) : null}
+
+      {task.acceptance_criteria ? (
+        <p className="max-w-none whitespace-pre-wrap break-words text-[11px] leading-relaxed">
+          <span className="font-medium">Acceptance criteria: </span>
+          <span className="text-muted-foreground">{task.acceptance_criteria}</span>
+        </p>
+      ) : isContainer ? (
+        <p className="text-[11px] text-muted-foreground">
+          No acceptance criteria: the tasks it contains carry them.
+        </p>
+      ) : null}
+
+      {(task.labels ?? []).length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1">
+          {(task.labels ?? []).map((label) => (
+            <Badge key={label} variant="muted">
+              {label}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+
+      {dependencies.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            depends on
+          </span>
+          {dependencies.map((dependency, dependencyIndex) => {
+            const edgeProblems = edges.get(`${index}:${dependencyIndex}`) ?? []
+            return (
+              <React.Fragment key={`${dependency}-${dependencyIndex}`}>
+                <Badge
+                  variant={edgeProblems.length > 0 ? 'danger' : 'secondary'}
+                  className="font-mono"
+                >
+                  {dependency}
+                </Badge>
+                <ProblemList problems={edgeProblems} />
+              </React.Fragment>
+            )
+          })}
+        </div>
+      ) : (
+        <span className="text-[11px] text-muted-foreground">No dependencies</span>
+      )}
+
+      <ProblemList problems={problems} />
+    </div>
+  )
+}
+
 /**
- * Read-only rendering of an architect plan (the proposed issue, its tasks, their
- * dependencies and acceptance criteria) plus the review actions. Shared by the
- * decompose dialog's draft review and the task detail page so both surfaces
- * show exactly the same data and use the same mutations.
+ * Read-only rendering of an architect plan — one task or many, with optional
+ * hierarchy, dependencies, priorities, labels and acceptance criteria — plus
+ * the review actions. Shared by the planning dialog's draft review and the task
+ * detail page so both surfaces show exactly the same data and use the same
+ * mutations.
  */
 export function PlanDraftReview({
   task,
@@ -88,7 +190,7 @@ export function PlanDraftReview({
   task: Task
   plan: ArchitectPlan
   /** Additional problems to render next to the offending row. */
-  problems?: PlanIssue[]
+  problems?: PlanProblem[]
   className?: string
 }) {
   const actions = useTaskActions()
@@ -102,41 +204,33 @@ export function PlanDraftReview({
   // approve failure.
   const parsedEdit = React.useMemo<{ plan: ArchitectPlan | null; error: string | null }>(() => {
     if (!editing) return { plan, error: null }
+    let value: unknown
     try {
-      const value = JSON.parse(editedText)
-      const result = architectPlanSchema.safeParse(value)
-      if (!result.success) {
-        return {
-          plan: null,
-          error: result.error.issues
-            .map((issue) => `${issue.path.join('.') || 'plan'}: ${issue.message}`)
-            .join('; '),
-        }
-      }
-      return { plan: result.data as ArchitectPlan, error: null }
+      value = JSON.parse(editedText)
     } catch (error) {
       return { plan: null, error: error instanceof Error ? error.message : 'invalid JSON' }
     }
+    const result = validatePlan(value)
+    if (result.status !== 'valid') {
+      if (result.status !== 'invalid') {
+        return { plan: null, error: 'the edited plan is empty' }
+      }
+      return {
+        plan: null,
+        error: result.problems
+          .map((problem) => `${problem.path}: ${problem.message}`)
+          .join('; '),
+      }
+    }
+    return { plan: result.plan, error: null }
   }, [editing, editedText, plan])
 
   const effectivePlan = editing ? parsedEdit.plan : plan
 
-  const schemaProblems = React.useMemo<PlanIssue[]>(() => {
-    if (editing && parsedEdit.plan) {
-      const result = architectPlanSchema.safeParse(parsedEdit.plan)
-      if (result.success) return []
-      return result.error.issues.map((issue) => ({
-        path: issue.path.length > 0 ? issue.path.join('.') : 'plan',
-        message: issue.message,
-      }))
-    }
-    const result = architectPlanSchema.safeParse(plan)
-    if (result.success) return []
-    return result.error.issues.map((issue) => ({
-      path: issue.path.length > 0 ? issue.path.join('.') : 'plan',
-      message: issue.message,
-    }))
-  }, [plan, editing, parsedEdit.plan])
+  const schemaProblems = React.useMemo<PlanProblem[]>(() => {
+    const result = validatePlan(effectivePlan ?? plan)
+    return result.status === 'invalid' ? result.problems : []
+  }, [plan, effectivePlan])
 
   const approveProblems = React.useMemo(
     () => errorPlanProblem(actions.approve.error ?? actions.approvePlan.error),
@@ -149,6 +243,34 @@ export function PlanDraftReview({
   const flatProblems = grouped.other
 
   const busy = actions.isBusy(task.id)
+  const shown = effectivePlan ?? plan
+  const hierarchy = React.useMemo(() => planHasHierarchy(shown), [shown])
+  const tree = React.useMemo(() => planTree(shown), [shown])
+  const indexes = React.useMemo(
+    () => new Map(shown.tasks.map((planTask, index) => [planTask.ref, index])),
+    [shown.tasks],
+  )
+  const containers = React.useMemo(
+    () => new Set(shown.tasks.map((planTask) => planTask.parent_ref).filter(Boolean)),
+    [shown.tasks],
+  )
+
+  const renderNode = (node: PlanNode, depth: number): React.ReactNode => {
+    const index = indexes.get(node.task.ref) ?? -1
+    return (
+      <React.Fragment key={`${node.task.ref}-${index}`}>
+        <PlanTaskCard
+          task={node.task}
+          index={index}
+          problems={grouped.tasks.get(index) ?? []}
+          edges={grouped.edges}
+          isContainer={containers.has(node.task.ref)}
+          depth={depth}
+        />
+        {node.children.map((child) => renderNode(child, depth + 1))}
+      </React.Fragment>
+    )
+  }
 
   const startEditing = () => {
     setEditedText(JSON.stringify(plan, null, 2))
@@ -169,10 +291,6 @@ export function PlanDraftReview({
     actions.approve.mutate(task.id)
   }
 
-  // While editing, render the edited plan; invalid JSON keeps the last valid
-  // view. `effectivePlan` is null only when the edit is currently invalid.
-  const shown = effectivePlan ?? plan
-
   return (
     <div className={cn('flex flex-col gap-3', className)}>
       <div className="flex flex-wrap items-center gap-2">
@@ -181,112 +299,21 @@ export function PlanDraftReview({
         <Badge variant="muted">
           {shown.tasks.length} task{shown.tasks.length === 1 ? '' : 's'}
         </Badge>
-        {editing ? <Badge variant="warning">editing</Badge> : null}
-        {shown.issue.priority !== undefined ? (
-          <PriorityBadge priority={shown.issue.priority} />
+        {containers.size > 0 ? (
+          <Badge variant="purple">{containers.size} container(s)</Badge>
         ) : null}
+        {hierarchy ? <Badge variant="info">hierarchy</Badge> : null}
+        {editing ? <Badge variant="warning">editing</Badge> : null}
       </div>
 
-      <div className="flex flex-col gap-2 rounded-md border border-border p-3">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          Proposed issue
-        </span>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="min-w-0 text-sm font-medium">{shown.issue.title}</span>
-          {(shown.issue.labels ?? []).map((label) => (
-            <Badge key={label} variant="outline">
-              {label}
-            </Badge>
-          ))}
-        </div>
-        {plan.issue.description ? (
-          <p className="max-w-none whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">
-            {shown.issue.description}
-          </p>
-        ) : null}
-        {plan.issue.acceptance_criteria ? (
-          <p className="max-w-none whitespace-pre-wrap break-words text-[11px] leading-relaxed">
-            <span className="font-medium">Acceptance criteria: </span>
-            <span className="text-muted-foreground">{shown.issue.acceptance_criteria}</span>
-          </p>
-        ) : null}
-        <ProblemList problems={grouped.issue} />
-      </div>
+      {shown.notes ? (
+        <p className="max-w-none whitespace-pre-wrap break-words rounded-md border border-border bg-muted/20 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
+          {shown.notes}
+        </p>
+      ) : null}
 
       <div className="flex flex-col gap-2">
-        {shown.tasks.map((planTask, index) => {
-          const taskProblems = grouped.tasks.get(index) ?? []
-          const dependencies = planTask.depends_on ?? []
-          return (
-            <div
-              key={`${planTask.ref}-${index}`}
-              className={cn(
-                'flex flex-col gap-1.5 rounded-md border p-2.5',
-                taskProblems.length > 0 ? 'border-destructive/50' : 'border-border',
-              )}
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-[11px] text-muted-foreground">{planTask.ref}</span>
-                <span className="min-w-0 flex-1 text-xs font-medium">{planTask.title}</span>
-                {planTask.priority !== undefined ? (
-                  <PriorityBadge priority={planTask.priority} />
-                ) : null}
-                {planTask.estimated_complexity ? (
-                  <Badge variant="outline">{planTask.estimated_complexity}</Badge>
-                ) : null}
-              </div>
-
-              {planTask.description ? (
-                <p className="max-w-none whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground">
-                  {planTask.description}
-                </p>
-              ) : null}
-
-              {planTask.acceptance_criteria ? (
-                <p className="max-w-none whitespace-pre-wrap break-words text-[11px] leading-relaxed">
-                  <span className="font-medium">Acceptance criteria: </span>
-                  <span className="text-muted-foreground">{planTask.acceptance_criteria}</span>
-                </p>
-              ) : null}
-
-              {(planTask.labels ?? []).length > 0 ? (
-                <div className="flex flex-wrap items-center gap-1">
-                  {(planTask.labels ?? []).map((label) => (
-                    <Badge key={label} variant="muted">
-                      {label}
-                    </Badge>
-                  ))}
-                </div>
-              ) : null}
-
-              {dependencies.length > 0 ? (
-                <div className="flex flex-wrap items-center gap-1">
-                  <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                    depends on
-                  </span>
-                  {dependencies.map((dependency, dependencyIndex) => {
-                    const edgeProblems = grouped.edges.get(`${index}:${dependencyIndex}`) ?? []
-                    return (
-                      <React.Fragment key={`${dependency}-${dependencyIndex}`}>
-                        <Badge
-                          variant={edgeProblems.length > 0 ? 'danger' : 'secondary'}
-                          className="font-mono"
-                        >
-                          {dependency}
-                        </Badge>
-                        <ProblemList problems={edgeProblems} />
-                      </React.Fragment>
-                    )
-                  })}
-                </div>
-              ) : (
-                <span className="text-[11px] text-muted-foreground">No dependencies</span>
-              )}
-
-              <ProblemList problems={taskProblems} />
-            </div>
-          )
-        })}
+        {tree.map((node) => renderNode(node, 0))}
       </div>
 
       {flatProblems.length > 0 ? (
@@ -310,14 +337,11 @@ export function PlanDraftReview({
       <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/30 p-3">
         <p className="text-[11px] leading-relaxed text-muted-foreground">
           Nothing is scheduled until a human approves this plan. Rejecting sends it back to the
-          architect for another attempt.
+          architect for another attempt. Approving creates the proposed tasks in this project.
         </p>
         {editing ? (
           <div className="flex flex-col gap-1">
-            <label
-              className="text-[11px] font-medium"
-              htmlFor={`plan-edit-${task.id}`}
-            >
+            <label className="text-[11px] font-medium" htmlFor={`plan-edit-${task.id}`}>
               Edit the plan JSON before approving
             </label>
             <textarea

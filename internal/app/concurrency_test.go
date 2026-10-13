@@ -43,7 +43,7 @@ func TestConcurrencyLimits(t *testing.T) {
 	}
 	tasks := make([]*domain.Task, 0, 3)
 	for i := 0; i < 3; i++ {
-		tasks = append(tasks, newIssueAndTask(t, svc, &project.Project, "Task", nil))
+		tasks = append(tasks, newProjectTask(t, svc, &project.Project, "Task", nil))
 	}
 
 	peakProject, peakAgent := 0, 0
@@ -134,7 +134,7 @@ func TestGlobalConcurrencyLimitIsRespected(t *testing.T) {
 		if err != nil {
 			t.Fatalf("creating project: %v", err)
 		}
-		newIssueAndTask(t, svc, &project.Project, "Task", nil)
+		newProjectTask(t, svc, &project.Project, "Task", nil)
 	}
 
 	peak := 0

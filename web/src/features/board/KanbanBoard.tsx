@@ -23,8 +23,9 @@ function sortTasks(tasks: Task[]): Task[] {
 }
 
 /**
- * The eight board columns returned by `GET /projects/{id}/board`, rendered as a
- * horizontally scrollable row of fixed-width columns.
+ * The board columns returned by `GET /projects/{id}/board`, rendered as a
+ * horizontally scrollable row of fixed-width columns. Only executable `work`
+ * tasks appear in a column; containers are rendered separately.
  *
  * Columns are taller than the viewport, so the container's own horizontal
  * scrollbar would sit below every card and be easy to miss. A mirrored scroll

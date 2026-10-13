@@ -1,6 +1,6 @@
 # Specification traceability
 
-Where each section of [`orxest-implementation-spec.md`](../orxest-implementation-spec.md)
+Where each section of [`orxest-implementation-spec.md`](orxest-implementation-spec.md)
 is implemented, and any deliberate deviation. Status values:
 
 - **done** — implemented as specified.
@@ -12,9 +12,9 @@ is implemented, and any deliberate deviation. Status values:
 | 1 | Product definition, project → execution model | done | `internal/domain`, `README.md` |
 | 2 | Product goals | done | see the capability table in `README.md` |
 | 3 | Core separation: Orxest owns orchestration, agent owns work | done | `internal/app` vs `internal/ports`; `internal/adapters/*` |
-| 4 | Terminology (project, issue, task, role, agent, harness, workflow, execution) | done | `internal/domain/*.go` |
+| 4 | Terminology (project, task, container, decomposition task, role, agent, harness, workflow, execution) | done | `internal/domain/*.go` |
 | 5 | Project model | done | `internal/app/project.go`, `projects` table |
-| 6 | Issues | done | `internal/app/issue.go`, `internal/domain/issue.go` |
+| 6 | Task hierarchy and containers (optional parent/child, derived progress, no issue entity) | done | `internal/domain/task.go` (`ParentTaskID`, `TaskKindContainer`, `DeriveProgress`), `internal/app/task.go` (`resolveParent`, `reconcileContainer`, `Progress`), migration 0005 |
 | 7 | Tasks (no permanent role/agent/model/harness) | done | `internal/domain/task.go` — no such fields exist |
 | 8 | Task dependencies as a DAG, cycles rejected | done | `task_dependencies`, `Reachable`, `TaskService.AddDependency` |
 | 9 | Roles (built-in + reusable) | done | `internal/domain/role.go`, `roles` table, `GET/POST /api/roles` |

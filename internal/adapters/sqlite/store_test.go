@@ -112,16 +112,16 @@ func TestProjectRepositoryBehaviour(t *testing.T) {
 	}
 }
 
-func newTask(t *testing.T, store *sqlite.DB, projectID, issueID, title string) *domain.Task {
+func newTask(t *testing.T, store *sqlite.DB, projectID, title string) *domain.Task {
 	t.Helper()
 	now := time.Now().UTC()
 	task := &domain.Task{
 		ID:          domain.NewID(domain.IDPrefixTask),
 		ProjectID:   projectID,
-		IssueID:     issueID,
 		Title:       title,
 		Status:      domain.TaskBacklog,
 		Kind:        domain.TaskKindWork,
+		Source:      domain.SourceManual,
 		WorkflowID:  "wfl_test",
 		MaxAttempts: 3,
 		CreatedAt:   now,
@@ -133,34 +133,34 @@ func newTask(t *testing.T, store *sqlite.DB, projectID, issueID, title string) *
 	return task
 }
 
-func newIssue(t *testing.T, store *sqlite.DB, projectID, title string) *domain.Issue {
+func newContainer(t *testing.T, store *sqlite.DB, projectID, title string) *domain.Task {
 	t.Helper()
 	now := time.Now().UTC()
-	issue := &domain.Issue{
-		ID:        domain.NewID(domain.IDPrefixIssue),
+	task := &domain.Task{
+		ID:        domain.NewID(domain.IDPrefixTask),
 		ProjectID: projectID,
 		Title:     title,
-		Status:    domain.IssueStatusOpen,
-		Source:    domain.SourceManual,
+		Status:    domain.TaskBacklog,
+		Kind:      domain.TaskKindContainer,
+		Source:    domain.SourceArchitect,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := store.Issues().Create(context.Background(), issue); err != nil {
-		t.Fatalf("creating issue: %v", err)
+	if err := store.Tasks().Create(context.Background(), task); err != nil {
+		t.Fatalf("creating container: %v", err)
 	}
-	return issue
+	return task
 }
 
 func TestDependencyGraphQueries(t *testing.T) {
 	ctx := context.Background()
 	store := openStore(t, "orxest.db")
 	project := newProject(t, store, "Graph")
-	issue := newIssue(t, store, project.ID, "Dependencies")
 
-	a := newTask(t, store, project.ID, issue.ID, "A")
-	b := newTask(t, store, project.ID, issue.ID, "B")
-	c := newTask(t, store, project.ID, issue.ID, "C")
-	d := newTask(t, store, project.ID, issue.ID, "D")
+	a := newTask(t, store, project.ID, "A")
+	b := newTask(t, store, project.ID, "B")
+	c := newTask(t, store, project.ID, "C")
+	d := newTask(t, store, project.ID, "D")
 
 	// A -> B -> D and A -> C -> D (edges point at the dependency).
 	for _, edge := range [][2]string{{b.ID, a.ID}, {c.ID, a.ID}, {d.ID, b.ID}, {d.ID, c.ID}} {
@@ -234,10 +234,9 @@ func TestTaskFilteringAndCounting(t *testing.T) {
 	ctx := context.Background()
 	store := openStore(t, "orxest.db")
 	project := newProject(t, store, "Filtering")
-	issue := newIssue(t, store, project.ID, "Tasks")
 
-	first := newTask(t, store, project.ID, issue.ID, "first")
-	second := newTask(t, store, project.ID, issue.ID, "second")
+	first := newTask(t, store, project.ID, "first")
+	second := newTask(t, store, project.ID, "second")
 	first.OrderIndex = 0
 	second.OrderIndex = 5
 	if err := store.Tasks().Update(ctx, first); err != nil {
@@ -277,7 +276,7 @@ func TestTaskFilteringAndCounting(t *testing.T) {
 	if counts[domain.TaskBacklog] != 1 || counts[domain.TaskReady] != 1 {
 		t.Errorf("unexpected counts %+v", counts)
 	}
-	next, err := store.Tasks().NextOrderIndex(ctx, issue.ID)
+	next, err := store.Tasks().NextOrderIndex(ctx, project.ID, "")
 	if err != nil {
 		t.Fatalf("next order index: %v", err)
 	}
@@ -290,15 +289,13 @@ func TestExecutionHistoryAndEvents(t *testing.T) {
 	ctx := context.Background()
 	store := openStore(t, "orxest.db")
 	project := newProject(t, store, "Executions")
-	issue := newIssue(t, store, project.ID, "Execution history")
-	task := newTask(t, store, project.ID, issue.ID, "work")
+	task := newTask(t, store, project.ID, "work")
 
 	now := time.Now().UTC()
 	exec := &domain.Execution{
 		ID:               domain.NewID(domain.IDPrefixExecution),
 		ProjectID:        project.ID,
 		TaskID:           task.ID,
-		IssueID:          issue.ID,
 		AgentID:          "agt_1",
 		AgentName:        "codex-senior",
 		RoleID:           domain.RoleDeveloper,
@@ -513,14 +510,13 @@ func TestTransactionRollback(t *testing.T) {
 	ctx := context.Background()
 	store := openStore(t, "orxest.db")
 	project := newProject(t, store, "Transactions")
-	issue := newIssue(t, store, project.ID, "Atomic work")
 
 	task := &domain.Task{
 		ID:        domain.NewID(domain.IDPrefixTask),
 		ProjectID: project.ID,
-		IssueID:   issue.ID,
 		Title:     "rollback me",
 		Status:    domain.TaskBacklog,
+		Kind:      domain.TaskKindWork,
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
@@ -545,5 +541,155 @@ func TestTransactionRollback(t *testing.T) {
 	}
 	if _, err := store.Tasks().Get(ctx, task.ID); err != nil {
 		t.Fatalf("expected the task to exist: %v", err)
+	}
+}
+
+// TestParentChildHierarchy covers the persistence side of optional
+// decomposition: containers, children, ancestors, derived progress, hierarchy
+// cycle detection and the distinction between containers and executable work.
+func TestParentChildHierarchy(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t, "orxest.db")
+	project := newProject(t, store, "Hierarchy")
+	other := newProject(t, store, "Other")
+
+	goal := newContainer(t, store, project.ID, "Ship OAuth")
+	child := newTask(t, store, project.ID, "Implement provider")
+	child.ParentTaskID = goal.ID
+	if err := store.Tasks().Update(ctx, child); err != nil {
+		t.Fatalf("reparenting a task: %v", err)
+	}
+	grandchild := newContainer(t, store, project.ID, "Nested outcome")
+	grandchild.ParentTaskID = goal.ID
+	if err := store.Tasks().Update(ctx, grandchild); err != nil {
+		t.Fatalf("nesting a container: %v", err)
+	}
+	leaf := newTask(t, store, project.ID, "Provider unit tests")
+	leaf.ParentTaskID = grandchild.ID
+	if err := store.Tasks().Update(ctx, leaf); err != nil {
+		t.Fatalf("reparenting into a nested container: %v", err)
+	}
+
+	children, err := store.Tasks().Children(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("children: %v", err)
+	}
+	if len(children) != 2 {
+		t.Fatalf("expected 2 direct children, got %d", len(children))
+	}
+	ancestors, err := store.Tasks().Ancestors(ctx, leaf.ID)
+	if err != nil {
+		t.Fatalf("ancestors: %v", err)
+	}
+	if len(ancestors) != 2 || ancestors[0].ID != goal.ID || ancestors[1].ID != grandchild.ID {
+		t.Fatalf("expected outermost-first ancestors, got %+v", ancestors)
+	}
+	descendants, err := store.Tasks().Descendants(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("descendants: %v", err)
+	}
+	if len(descendants) != 3 {
+		t.Fatalf("expected 3 descendants, got %d", len(descendants))
+	}
+
+	// Progress counts executable work only: the nested container is structural.
+	progress, err := store.Tasks().Progress(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("progress: %v", err)
+	}
+	if progress.Total != 2 || progress.Done != 0 {
+		t.Fatalf("unexpected progress %+v", progress)
+	}
+	if progress.Progress.Status != domain.TaskBacklog {
+		t.Errorf("nothing started yet, got status %s", progress.Progress.Status)
+	}
+	done := time.Now().UTC()
+	child.Status = domain.TaskDone
+	child.CompletedAt = &done
+	if err := store.Tasks().Update(ctx, child); err != nil {
+		t.Fatalf("completing a child: %v", err)
+	}
+	progress, err = store.Tasks().Progress(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("progress: %v", err)
+	}
+	if progress.Done != 1 || progress.Progress.Executable != 1 || progress.Progress.Status != domain.TaskReady {
+		t.Fatalf("unexpected partial progress %+v", progress)
+	}
+
+	// Hierarchy cycles are detectable before they are written.
+	cycle, err := store.Tasks().ReachableByParent(ctx, goal.ID, leaf.ID)
+	if err != nil {
+		t.Fatalf("reachable by parent: %v", err)
+	}
+	if !cycle {
+		t.Error("expected the leaf to be reachable from the goal's parent chain")
+	}
+	if n, err := store.Tasks().CountChildren(ctx, goal.ID); err != nil || n != 2 {
+		t.Fatalf("count children: %v %d", err, n)
+	}
+
+	// Roots, kinds and parent scoping filter the listing.
+	roots, err := store.Tasks().List(ctx, repository.TaskFilter{ProjectID: project.ID, RootsOnly: true})
+	if err != nil || len(roots) != 1 || roots[0].ID != goal.ID {
+		t.Fatalf("roots filter failed: %v %+v", err, roots)
+	}
+	workOnly, err := store.Tasks().List(ctx, repository.TaskFilter{
+		ProjectID: project.ID, Kinds: []domain.TaskKind{domain.TaskKindWork},
+	})
+	if err != nil || len(workOnly) != 2 {
+		t.Fatalf("kind filter failed: %v %+v", err, workOnly)
+	}
+	containers, err := store.Tasks().List(ctx, repository.TaskFilter{
+		ProjectID: project.ID, Kinds: []domain.TaskKind{domain.TaskKindContainer},
+	})
+	if err != nil || len(containers) != 2 {
+		t.Fatalf("container filter failed: %v %+v", err, containers)
+	}
+	executableCounts, err := store.Tasks().CountExecutableByStatus(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("counting executable tasks: %v", err)
+	}
+	if executableCounts[domain.TaskDone] != 1 || executableCounts[domain.TaskBacklog] != 1 {
+		t.Errorf("containers must not be counted as work: %+v", executableCounts)
+	}
+	if total := executableCounts[domain.TaskDone] + executableCounts[domain.TaskBacklog]; total != 2 {
+		t.Errorf("expected exactly 2 executable tasks, got %d", total)
+	}
+
+	// A parent must belong to the same project; the foreign key enforces the
+	// reference itself, and the project invariant is enforced above the store.
+	crossProject := newTask(t, store, other.ID, "elsewhere")
+	crossProject.ParentTaskID = goal.ID
+	if err := store.Tasks().Update(ctx, crossProject); err != nil {
+		t.Fatalf("the store allows the row; the service rejects the cross-project parent: %v", err)
+	}
+	if err := store.Tasks().Create(ctx, &domain.Task{
+		ID: domain.NewID(domain.IDPrefixTask), ProjectID: project.ID,
+		ParentTaskID: "tsk_does_not_exist", Title: "bad parent",
+	}); err == nil {
+		t.Error("expected an unknown parent to be rejected by the foreign key")
+	}
+}
+
+// TestCascadeAndContainerSafety covers the deliberate delete policy: deleting a
+// container removes its subtree, while a leaf's dependencies and executions
+// cascade with it.
+func TestCascadeAndContainerSafety(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t, "orxest.db")
+	project := newProject(t, store, "Cascade")
+
+	container := newContainer(t, store, project.ID, "Outcome")
+	child := newTask(t, store, project.ID, "Child")
+	child.ParentTaskID = container.ID
+	if err := store.Tasks().Update(ctx, child); err != nil {
+		t.Fatalf("reparenting: %v", err)
+	}
+	if err := store.Tasks().Delete(ctx, container.ID); err != nil {
+		t.Fatalf("deleting a container: %v", err)
+	}
+	if _, err := store.Tasks().Get(ctx, child.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected the subtree to cascade, got %v", err)
 	}
 }

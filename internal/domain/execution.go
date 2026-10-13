@@ -95,7 +95,6 @@ type Execution struct {
 	ID        string `json:"id"`
 	ProjectID string `json:"project_id"`
 	TaskID    string `json:"task_id"`
-	IssueID   string `json:"issue_id"`
 
 	AgentID          string `json:"agent_id"`
 	AgentName        string `json:"agent_name"`

@@ -66,3 +66,59 @@ func RedactArgs(args []string) []string {
 	}
 	return out
 }
+
+// LogStream is one captured output stream of an execution, in the order it
+// should appear in the combined raw log.
+type LogStream struct {
+	// Label names the stream in the combined log, for example "stdout".
+	Label string
+	// Path is the per-stream file the adapter wrote while draining.
+	Path string
+}
+
+// CombineLog assembles the raw log of one execution from its per-stream files
+// and returns the path of the combined file, which is what Orxest records as the
+// execution's raw log.
+//
+// A coding agent does not put everything a human needs in one stream. Codex
+// writes its JSONL event stream to stdout but its startup warnings and fatal
+// errors to stderr; Pi does the same. Pointing the raw log at stdout alone meant
+// "Open raw log" showed an empty dialog for a failed execution whose entire
+// diagnosis was sitting in stderr. The combined file keeps the original
+// per-stream files intact (they remain useful on their own) and adds a labelled
+// view that is never silently empty when the agent produced output.
+func CombineLog(runDir string, streams []LogStream) (string, error) {
+	if strings.TrimSpace(runDir) == "" {
+		return "", fmt.Errorf("childproc: run directory is empty")
+	}
+	path := filepath.Join(runDir, "output.log")
+	var out strings.Builder
+	for _, stream := range streams {
+		data, err := os.ReadFile(stream.Path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", fmt.Errorf("childproc: reading %s: %w", stream.Path, err)
+		}
+		label := stream.Label
+		if label == "" {
+			label = filepath.Base(stream.Path)
+		}
+		if out.Len() > 0 {
+			out.WriteString("\n")
+		}
+		fmt.Fprintf(&out, "=== %s (%d bytes, %s) ===\n", label, len(data), filepath.Base(stream.Path))
+		out.Write(data)
+		if len(data) == 0 || data[len(data)-1] != '\n' {
+			out.WriteString("\n")
+		}
+	}
+	if out.Len() == 0 {
+		out.WriteString("=== no output captured ===\n")
+	}
+	if err := os.WriteFile(path, []byte(out.String()), 0o644); err != nil {
+		return "", fmt.Errorf("childproc: writing %s: %w", path, err)
+	}
+	return path, nil
+}

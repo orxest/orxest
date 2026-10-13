@@ -89,3 +89,68 @@ func TestSignalGroupStopsAChildAndItsGrandchild(t *testing.T) {
 		t.Error("expected the grandchild to be terminated with the process group")
 	}
 }
+
+// TestCombineLogIncludesEveryStream pins the fix for an empty raw log dialog.
+// Codex reports its startup warnings and fatal errors on stderr, but the
+// recorded raw log used to be the stdout capture alone, so "Open raw log" was
+// empty for exactly the executions a human most needs to inspect.
+func TestCombineLogIncludesEveryStream(t *testing.T) {
+	dir := t.TempDir()
+	stdout := filepath.Join(dir, "output.jsonl")
+	stderr := filepath.Join(dir, "stderr.log")
+	if err := os.WriteFile(stdout, nil, 0o644); err != nil {
+		t.Fatalf("writing stdout: %v", err)
+	}
+	if err := os.WriteFile(stderr, []byte("Error: failed to initialize\n"), 0o644); err != nil {
+		t.Fatalf("writing stderr: %v", err)
+	}
+
+	path, err := childproc.CombineLog(dir, []childproc.LogStream{
+		{Label: "stdout (JSONL events)", Path: stdout},
+		{Label: "stderr (diagnostics)", Path: stderr},
+	})
+	if err != nil {
+		t.Fatalf("combining: %v", err)
+	}
+	if filepath.Base(path) != "output.log" {
+		t.Errorf("unexpected combined path %q", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the combined log: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "Error: failed to initialize") {
+		t.Errorf("the combined log must include stderr, got:\n%s", content)
+	}
+	if !strings.Contains(content, "stdout (JSONL events)") || !strings.Contains(content, "stderr (diagnostics)") {
+		t.Errorf("each stream must be labelled, got:\n%s", content)
+	}
+	// The per-stream files stay intact and useful on their own.
+	if info, err := os.Stat(stdout); err != nil || info.Size() != 0 {
+		t.Errorf("stdout capture must be untouched: %v", err)
+	}
+	if info, err := os.Stat(stderr); err != nil || info.Size() == 0 {
+		t.Errorf("stderr capture must be untouched: %v", err)
+	}
+}
+
+// TestCombineLogNeverProducesAnEmptyFile guards the dialog's "(empty log)"
+// branch: a silent execution still gets an explanatory file rather than a
+// zero-byte one that reads as a bug.
+func TestCombineLogNeverProducesAnEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	path, err := childproc.CombineLog(dir, []childproc.LogStream{
+		{Label: "stdout", Path: filepath.Join(dir, "missing.jsonl")},
+	})
+	if err != nil {
+		t.Fatalf("combining: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	if len(data) == 0 {
+		t.Error("a silent execution must still produce an explanatory log file")
+	}
+}

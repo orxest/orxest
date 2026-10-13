@@ -212,6 +212,8 @@ func (h *Harness) Start(ctx context.Context, req ports.ExecutionRequest) (ports.
 		events:     make(chan ports.Event, 512),
 		done:       make(chan struct{}),
 		logPath:    stdoutPath,
+		stdoutPath: stdoutPath,
+		stderrPath: stderrPath,
 		grace:      h.opts.GracePeriod,
 		drainGrace: h.opts.DrainGrace,
 		stdoutRead: stdoutRead,
@@ -392,14 +394,18 @@ func (h *Harness) environment(req ports.ExecutionRequest) []string {
 }
 
 type handle struct {
-	argv       []string
-	id         string
-	ctx        context.Context
-	cmd        *exec.Cmd
-	events     chan ports.Event
-	done       chan struct{}
-	readers    sync.WaitGroup
-	logPath    string
+	argv    []string
+	id      string
+	ctx     context.Context
+	cmd     *exec.Cmd
+	events  chan ports.Event
+	done    chan struct{}
+	readers sync.WaitGroup
+	logPath string
+	// stdoutPath and stderrPath are the per-stream files combined into logPath
+	// once both streams have been drained.
+	stdoutPath string
+	stderrPath string
 	grace      time.Duration
 	drainGrace time.Duration
 	stdoutRead *os.File
@@ -504,6 +510,17 @@ func (h *handle) wait() {
 	err := h.cmd.Wait()
 	h.drainReaders()
 	close(h.events)
+
+	// Both streams are drained and their files closed, so the combined raw log
+	// can be assembled. Pi reports startup warnings and fatal errors on stderr,
+	// so pointing the recorded log at stdout alone showed an empty dialog for an
+	// execution whose entire diagnosis was on stderr.
+	if combined, err := childproc.CombineLog(filepath.Dir(h.logPath), []childproc.LogStream{
+		{Label: "stdout (JSONL events)", Path: h.stdoutPath},
+		{Label: "stderr (diagnostics)", Path: h.stderrPath},
+	}); err == nil {
+		h.logPath = combined
+	}
 
 	code := 0
 	var exitErr *exec.ExitError

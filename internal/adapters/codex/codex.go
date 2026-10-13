@@ -194,6 +194,8 @@ func (h *Harness) Start(ctx context.Context, req ports.ExecutionRequest) (ports.
 		done:            make(chan struct{}),
 		lastMessagePath: lastMessagePath,
 		logPath:         stdoutPath,
+		stdoutPath:      stdoutPath,
+		stderrPath:      stderrPath,
 		grace:           h.opts.GracePeriod,
 		argv:            childproc.RedactArgs(append([]string{binary}, args...)),
 		log:             h.log.With(slog.String("execution_id", req.ExecutionID)),
@@ -204,7 +206,6 @@ func (h *Harness) Start(ctx context.Context, req ports.ExecutionRequest) (ports.
 		slog.String("branch", req.BranchName),
 		slog.String("model", req.Agent.Model),
 		slog.String("log", stdoutPath))
-
 	// The two stream readers must finish before the process is reaped: os/exec
 	// closes the pipes in Wait, so draining afterwards would truncate output.
 	handle.readers.Add(2)
@@ -324,7 +325,11 @@ type handle struct {
 	done            chan struct{}
 	lastMessagePath string
 	logPath         string
-	grace           time.Duration
+	// stdoutPath and stderrPath are the per-stream files combined into logPath
+	// once both streams have been drained.
+	stdoutPath string
+	stderrPath string
+	grace      time.Duration
 	// argv is the credential-redacted command line, exposed for observability.
 	argv []string
 	log  *slog.Logger
@@ -401,6 +406,17 @@ func (h *handle) wait(lastMessagePath string) {
 	err := h.cmd.Wait()
 	h.drainReaders()
 	close(h.events)
+
+	// Both streams are drained and their files closed, so the combined raw log
+	// can be assembled. It is what the execution records, so "Open raw log"
+	// shows the stderr diagnostics too instead of only Codex's JSONL event
+	// stream (which is empty for an execution that dies before producing one).
+	if combined, err := childproc.CombineLog(filepath.Dir(h.logPath), []childproc.LogStream{
+		{Label: "stdout (JSONL events)", Path: h.stdoutPath},
+		{Label: "stderr (diagnostics)", Path: h.stderrPath},
+	}); err == nil {
+		h.logPath = combined
+	}
 
 	code := 0
 	var exitErr *exec.ExitError

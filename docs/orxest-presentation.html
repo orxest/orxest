@@ -117,6 +117,14 @@
   .node.hot { border-color: #3f3f46; background: var(--panel-2); }
   .arrow { color: var(--fg-faint); padding: 0 7px; font-size: 13px; }
 
+  /* ---------- real product screenshots ---------- */
+  .shot { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 20px 50px rgba(0,0,0,.35); background: #0b0b0e; }
+  .shot-tall { max-height: 62vh; width: auto; margin: 0 auto; }
+  .shot-scroll { max-height: 60vh; overflow: auto; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 20px 50px rgba(0,0,0,.35); }
+  .shot-scroll .shot { border: 0; border-radius: 0; box-shadow: none; }
+  figure.shot-fig { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+  figure.shot-fig figcaption { font-size: 11.5px; color: var(--fg-faint); }
+
   /* ---------- console mockups (illustrative reproductions of the real UI) ---------- */
   .ui { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.35); }
   .ui-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--panel-2); border-bottom: 1px solid var(--border); }
@@ -580,6 +588,38 @@
       </div>
     </section>
 
+    <!-- 7b ───────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">The same staffing, in the running product</div><h2>Every role your workflow uses, and who serves it</h2></div>
+        <div class="badge outline mono">GET /api/projects/:id/agents</div>
+      </div>
+      <div class="cols-6040">
+        <figure class="shot-fig">
+          <div class="shot-scroll"><img class="shot" src="images/agents.jpg" alt="The project agents page: each role of the default workflow as a group, with the agent assigned to it, its harness, model, reasoning level and priority." /></div>
+          <figcaption>Roles are grouped exactly as the workflow uses them, so a role with no agent is visible before a task ever reaches it.</figcaption>
+        </figure>
+        <div class="stack">
+          <div class="card">
+            <h4>What this screen answers</h4>
+            <ul class="small">
+              <li><strong>Who runs this step?</strong> each role lists the agents assigned to it, with priority</li>
+              <li><strong>Which roles still have nobody?</strong> a role with no agent is called out here rather than discovered when a task blocks</li>
+              <li><strong>Which roles does my workflow actually use?</strong> the page reads the project’s workflow, not a fixed list</li>
+              <li><strong>Which harness and model?</strong> the assignment points at a reusable agent configuration</li>
+            </ul>
+          </div>
+          <div class="card tight">
+            <h4>Failover, not difficulty routing</h4>
+            <p class="small">Several agents in one role are <em>alternatives</em>: the highest priority available one is chosen, and a
+              lower priority one is used only when the preferred agent is disabled or at capacity. That is failover.
+              For difficulty-based splitting, use the distinct <span class="mono">junior-developer</span> and
+              <span class="mono">senior-developer</span> roles.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- 8 ─────────────────────────────────────────────────────────── -->
     <section class="slide">
       <div class="slide-head">
@@ -642,44 +682,14 @@ task dispatched   task_id=tsk_…  step=implementation
     <section class="slide">
       <div class="slide-head">
         <div><div class="kicker">After creation</div><h2>What the board shows you</h2></div>
-        <div class="badge outline mono">/projects/:id/board</div>
+        <div class="badge outline mono">/projects/:id/tasks</div>
       </div>
       <div class="cols-6040">
         <div>
-          <div class="label-illus">Board — orchestration state, not a task store you have to curate</div>
-          <div class="ui">
-            <div class="ui-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="ui-url">127.0.0.1:8787/projects/prj_…/board</span></div>
-            <div class="ui-body">
-              <div class="ui-h1">Payments platform</div>
-              <div class="ui-sub">9 tasks · 1 container · 2 running · max concurrent 2 · auto integrate on</div>
-              <div class="grid3">
-                <div class="ui-card" style="margin:0">
-                  <div class="h">Backlog <span class="dim">3</span></div>
-                  <div class="d">Add webhook retries</div>
-                  <div class="d">Rotate signing keys</div>
-                </div>
-                <div class="ui-card" style="margin:0">
-                  <div class="h">In Progress <span class="dim">2</span></div>
-                  <div class="d">Implement user model<br /><span class="badge mono">implementation</span> <span class="badge mono">pi-senior</span></div>
-                  <div class="d">Add authentication tests<br /><span class="badge mono">testing</span> <span class="badge mono">pi-tester</span></div>
-                </div>
-                <div class="ui-card" style="margin:0">
-                  <div class="h">Review <span class="dim">1</span></div>
-                  <div class="d">Implement JWT auth<br /><span class="badge purple">awaiting human approval</span></div>
-                </div>
-                <div class="ui-card" style="margin:0">
-                  <div class="h">Awaiting integration <span class="dim">1</span></div>
-                  <div class="d">Rotate signing keys<br /><span class="badge mono">auto_integrate off</span></div>
-                </div>
-              </div>
-              <div class="ui-card" style="margin-top:12px">
-                <div class="h">Activity <span class="badge success">live</span></div>
-                <div class="d mono">task.started → implementation · pi-senior</div>
-                <div class="d mono">execution.output → “Running tests…”</div>
-                <div class="d mono">task.review → needs a human decision</div>
-              </div>
-            </div>
-          </div>
+          <figure class="shot-fig">
+            <div class="shot-scroll"><img class="shot" src="images/board.jpg" alt="The Orxest task board for a project: dashboard tiles, the aggregated agent usage strip, the planning activity card with Approve and Reject on the draft plan, and one column per task state holding cards." /></div>
+            <figcaption>Board — orchestration state, not a task store you have to curate. Dashboard tiles, aggregated agent usage, the internal planning activity, and one column per state. Cards carry the step, attempts, agent execution time, blockers and dependencies.</figcaption>
+          </figure>
         </div>
         <div class="stack">
           <div class="card">
@@ -687,7 +697,7 @@ task dispatched   task_id=tsk_…  step=implementation
             <ul class="small">
               <li>one worktree and branch <span class="mono">orxest/task/&lt;id&gt;</span> per task, shared by its sequential steps and rework</li>
               <li>an explicit <span class="mono">integration</span> state when <span class="mono">auto_integrate</span> is off, so dependents never start from a branch without their prerequisites</li>
-              <li>live streamed output and a raw JSONL harness log</li>
+              <li>live streamed output and the harness raw log (stdout and stderr combined, so a startup failure is visible)</li>
               <li>append-only execution history with the agent, model and outcome of every attempt</li>
               <li>token and cost metrics reported by the harness</li>
               <li>rework loops, retries and a merge into the target branch on approval</li>
@@ -697,6 +707,69 @@ task dispatched   task_id=tsk_…  step=implementation
             <h4>Where to look when something is stuck</h4>
             <p class="small">Task view → status, current step, current agent, blocked reason, failure kind,
               dependency statuses and the full execution history. Every state change carries a timestamp.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9b ───────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">Planning</div><h2>Plan work with the architect — then decide</h2></div>
+        <div class="badge outline mono">POST /api/projects/:id/decompose</div>
+      </div>
+      <div class="cols">
+        <figure class="shot-fig">
+          <div class="shot-scroll"><img class="shot" src="images/plan-approval.jpg" alt="A proposed plan waiting for approval: four proposed tasks with a container, dependencies, priority, labels and acceptance criteria, with Approve plan, Edit plan and Reject plan actions." /></div>
+          <figcaption>The architect returns one or more tasks; Orxest validates the graph before anything exists. Nothing is scheduled until you approve.</figcaption>
+        </figure>
+        <div class="stack">
+          <div class="card">
+            <h4>What the architect may propose</h4>
+            <ul class="small">
+              <li>one task for a straightforward change, the smallest useful set otherwise</li>
+              <li>optional hierarchy: a parent becomes a structural <span class="mono">container</span> that is never dispatched</li>
+              <li><span class="mono">depends_on</span> prerequisites, which stay separate from hierarchy</li>
+              <li>priority, optional labels and concrete acceptance criteria per executable task</li>
+              <li>never an agent, model or harness — Orxest selects those from roles</li>
+            </ul>
+          </div>
+          <div class="card tight">
+            <h4>Approval is a per-project setting</h4>
+            <p class="small">By default a validated plan waits in <span class="mono">review</span>: approve it from the plan page or straight from the board, or reject it with a reason and the architect tries again.
+              Turn on <em>plan approval: auto</em> in the project header and Orxest persists validated plans without the checkpoint.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9c ───────────────────────────────────────────────────────── -->
+    <section class="slide">
+      <div class="slide-head">
+        <div><div class="kicker">When something is stuck</div><h2>One task, everything you need to explain it</h2></div>
+        <div class="badge outline mono">/tasks/:id</div>
+      </div>
+      <div class="cols">
+        <figure class="shot-fig">
+          <div class="shot-scroll"><img class="shot" src="images/task-detail.jpg" alt="A task detail page: status, attempts, workspace and branch, workflow progress with the current step highlighted, the current execution, and the full event timeline." /></div>
+          <figcaption>Task view — status, current step and agent, attempts, workspace and branch, commit, workflow progress, and the append-only event timeline.</figcaption>
+        </figure>
+        <div class="stack">
+          <div class="card">
+            <h4>Read the state, not the logs</h4>
+            <ul class="small">
+              <li>which step it is on, and which roles remain</li>
+              <li>why it is blocked, with a classified failure kind</li>
+              <li>the branch and worktree it owns, and the commit it produced</li>
+              <li>every attempt: agent, model, outcome and summary</li>
+              <li>the raw harness log — stdout and stderr combined</li>
+            </ul>
+          </div>
+          <div class="card tight">
+            <h4>Human control</h4>
+            <p class="small">Approve or reject a gate, retry a failure, reassign an agent, move a step, cancel, resolve an
+              integration conflict, or hand the whole project a pause. Every action is a validated transition, not a
+              direct write.</p>
           </div>
         </div>
       </div>

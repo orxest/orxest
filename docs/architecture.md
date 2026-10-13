@@ -244,8 +244,10 @@ observed (stop reason, exit code) and, optionally, runtime metrics.
   written to a file and piped on **stdin** with `-`, so no prompt content can be
   interpreted by a shell or hit an argument length limit.
 - Streaming: stdout is parsed as JSONL into `item.*`/`turn.*` events; stderr is
-  forwarded as warnings. Raw output is kept in
-  `<worktree root>/runs/<execution id>/output.jsonl`.
+  forwarded as warnings. Both streams are captured under
+  `<worktree root>/runs/<execution id>/` as `output.jsonl` and `stderr.log`, and
+  the execution records the combined `output.log` as its raw log, so a failure
+  reported only on stderr is still visible in the UI.
 - Result: the last agent message is parsed for a JSON report. Statuses are mapped
   onto workflow outcomes (above) and anything unparseable falls back to the exit
   code so an agent cannot silently "succeed".
@@ -453,7 +455,43 @@ the task without human action. `integration_conflict`, `agent_blocked`,
 `environment_failure` and `timeout` require a human decision, so they stay put
 until someone acts on them.
 
-## 12. Testing strategy
+## 12. Frontend and read models
+
+The web interface is a projection of the API: it owns no state the backend does
+not, and every figure on screen comes from a documented endpoint.
+
+- **Board.** `GET /api/projects/{id}/board` returns one column per status, the
+  structural containers with derived progress, and the internal planning records
+  separately. Columns hold executable work only, so nothing on the board implies
+  an execution that will never happen. Cards show status, step, attempts, the
+  agent execution time, the blocker, the dependency count and the branch.
+- **Drag to change state.** A drop applies the same transition the actions menu
+  offers, and the backend still validates it; terminal targets ask first because
+  they stop a running execution. Dragging towards either edge of the board
+  autoscrolls it, which is the only way to reach the columns beyond the viewport:
+  the horizontal scrollbar is hidden behind a mirror rail. The pointer is tracked
+  on the document rather than on the board, because dragging into an edge pushes
+  the pointer outside the board where its own `dragover` events no longer arrive.
+- **Project statistics.** `GET /api/projects/{id}/stats` counts executable work,
+  containers and planning records separately, and aggregates agent usage from the
+  append-only execution history: total execution time, executions, token usage
+  (with the cache and reasoning subsets), steps and the provider-reported cost.
+  The sum is computed in Go rather than in SQL, because execution timestamps carry
+  nanosecond precision and SQLite's date functions are double based.
+- **Plan approval.** `settings.auto_accept_plans` is a per-project switch, off by
+  default, exposed as the *plan approval* control in the project header and by
+  `PATCH /api/projects/{id}`. While it is off, a validated plan waits in `review`
+  and can be approved or rejected from the plan detail page or directly from the
+  planning row on the board; while it is on, Orxest persists the plan as soon as
+  the architect finishes.
+- **Task view.** `GET /api/tasks/{id}/detail` returns the task with its parent,
+  ancestor chain, children and derived progress, plus the workflow, current step
+  and role, executions, dependencies, dependents and events. The raw log a
+  harness produced is available at `GET /api/executions/{id}/log` as the combined
+  `output.log` (see §4), so a harness that reports its failure only on stderr is
+  still diagnosable from the UI.
+
+## 13. Testing strategy
 
 - `internal/domain` — state machines, workflow resolution, plan validation,
   naming helpers: pure unit tests.

@@ -111,7 +111,9 @@ hammered by parallel tasks. Raise it deliberately.
 - Task view: current step, role, agent, model, attempt, elapsed time, branch,
   changed files, execution history, live log.
 - Execution view: streamed harness output (`execution.output` events) plus the
-  raw log file at `<worktree root>/runs/<execution id>/output.jsonl`.
+  raw log at `<worktree root>/runs/<execution id>/output.log`, which combines the
+  harness stdout (`output.jsonl`) with its stderr (`stderr.log`) — a harness that
+  fails during startup reports that failure only on stderr.
 - `GET /api/scheduler` shows limits, active executions and tick state.
 - Structured backend logs (`log.format: json` for machine consumption).
 

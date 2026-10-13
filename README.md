@@ -32,7 +32,13 @@ one. Every execution is an append-only history record with its own agent, model
 and outcome, persisted in SQLite (the history is lost if the database is
 deleted).
 
-- Full specification: [`orxest-implementation-spec.md`](docs/orxest-implementation-spec.md)
+![The project task board: dashboard tiles, the aggregated agent usage strip, the planning activity card, and the state columns.](docs/images/board.jpg)
+
+*The task board. Dashboard tiles, aggregated agent usage, internal planning
+activity with **Approve**/**Reject** on the draft plan, and one column per task
+state. Cards carry the agent execution time, attempts, blockers and dependency
+count.*
+
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
 - Configuration: [`docs/configuration.md`](docs/configuration.md)
 - Operations guide: [`docs/operations.md`](docs/operations.md)
@@ -43,7 +49,7 @@ deleted).
 
 ## Quick start
 
-Requirements: Go 1.25+, Node 20+ (only to build the web interface), Git, and at
+Requirements: Go 1.26+, Node 20+ (only to build the web interface), Git, and at
 least one coding-agent CLI: [Codex](https://github.com/openai/codex) or
 [Pi](https://github.com/earendil-works/pi) (`npm i -g @earendil-works/pi-coding-agent`).
 
@@ -138,9 +144,12 @@ it; Orxest commits the work on its behalf so integration is still exercised.
 | Harness adapters: Codex and Pi (JSON streaming, structured output, cancellation, timeouts, token/cost capture) | yes |
 | Append-only execution history and per-execution event log | yes |
 | Retry budgets, rework loops, review approval/rejection, human control actions | yes |
+| Board drag-and-drop between states, with edge autoscroll to reach every column | yes |
 | Clean-merge integration with an explicit conflict state | yes |
 | REST API + SSE streams + generated OpenAPI document | yes |
 | Architect-driven planning: a validated task/dependency/hierarchy draft you approve or reject | yes |
+| Plan approval is a per-project switch: *required* by default, or validated plans accepted automatically | yes |
+| Aggregated agent usage per project: total execution time, tokens, steps and reported cost | yes |
 | Web UI: dashboard, board, task view, execution/log view, agents, workflows | yes |
 | Optional decision provider (disabled by default, deterministic policies) | yes |
 | GitHub/PR integration, cost optimisation, more harness adapters | planned (phase 2) |
@@ -165,17 +174,24 @@ internal/api/                REST handlers, SSE, generated OpenAPI
 internal/events/             in-process event bus and execution stream hub
 migrations/                  SQL schema, embedded in the binary
 web/                         React + TypeScript + Vite + Tailwind + shadcn/ui frontend
-docs/                        architecture, configuration, operations, OpenAPI
+docs/                        architecture, configuration, operations, OpenAPI, screenshots
+AGENTS.md                    build, test and convention guidance for coding agents
 ```
 
 ## Development
 
 ```bash
-make test          # full test suite
+make test          # full Go test suite
 make test-race     # with the race detector
-make web-dev       # Vite dev server on :5173, proxying /api to :8787
 make openapi       # regenerate docs/openapi.json
 make help          # list targets
+
+# frontend (from web/): the board's drag/autoscroll logic has unit tests
+cd web
+npm run typecheck  # tsc -b
+npm test           # node:test, no extra dependency
+npm run build      # typecheck + vite build into web/dist
+npm run dev        # Vite dev server on :5173, proxying /api to :8787
 ```
 
 The test suite includes the end-to-end acceptance scenarios driven by the fake
@@ -194,8 +210,8 @@ return structured output). Approving
 it (`POST /api/tasks/{id}/approve`) creates the tasks, dependencies and optional
 containers; rejecting it (`POST /api/tasks/{id}/reject`) asks the architect
 again. A project can opt into `settings.auto_accept_plans` — the *plan approval*
-control in its header — to persist validated plans without review. The architect is never a mandatory step of the per-task
-workflow.
+control in its header — to persist validated plans without review. The architect
+is never a mandatory step of the per-task workflow.
 
 ## Licence
 

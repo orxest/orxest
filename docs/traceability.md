@@ -1,11 +1,16 @@
 # Specification traceability
 
-Where each section of [`orxest-implementation-spec.md`](orxest-implementation-spec.md)
-is implemented, and any deliberate deviation. Status values:
+A historical traceability matrix: which part of the system satisfies each section
+of the original implementation specification, and any deliberate deviation. The
+specification itself was folded into [`architecture.md`](architecture.md), which
+is the maintained description; the `§` numbers below are kept only as stable
+anchors so existing references still resolve.
+
+Status values:
 
 - **done** — implemented as specified.
 - **done (differs)** — implemented with a documented, deliberate difference.
-- **phase 2/3** — explicitly future work per spec §51–§54.
+- **phase 2/3** — explicitly future work per the original §51–§54.
 
 | § | Topic | Status | Where |
 | --- | --- | --- | --- |

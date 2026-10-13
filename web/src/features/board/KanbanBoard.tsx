@@ -5,6 +5,7 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { EmptyState } from '@/components/layout/EmptyState'
 import { Badge } from '@/components/ui/badge'
 import { TaskCard, useBusyTaskIds } from '@/features/board/TaskCard'
+import { autoScrollSpeed, startAutoScroll } from '@/features/board/boardAutoScroll'
 import { dropTargetStatus, needsDropConfirmation } from '@/features/board/taskDrag'
 import { statusAccent } from '@/features/board/statusColors'
 import { useTaskActions } from '@/hooks/mutations'
@@ -63,6 +64,13 @@ export function KanbanBoard({
     column: string
   } | null>(null)
 
+  // Autoscroll while dragging. The horizontal scrollbar is hidden and the board
+  // is wider than the viewport, so without this a card could only be dropped on
+  // a column that already happened to be visible. Dragover supplies the pointer
+  // position; an animation frame applies the scroll, so the board keeps moving
+  // while the pointer is held still against an edge.
+  const autoScrollRef = React.useRef(0)
+
   const measure = React.useCallback(() => {
     const content = contentRef.current
     if (!content) return
@@ -111,6 +119,33 @@ export function KanbanBoard({
     setHoverColumn(null)
   }
 
+  // Runs only while a card is being dragged, so the board never scrolls itself.
+  React.useEffect(() => {
+    if (!dragTask) return
+    // Dragover is the only event that reports the pointer position mid-drag,
+    // and its default must stay enabled for the board to keep scrolling while
+    // the pointer is held against an edge.
+    const onDragOver = (event: DragEvent) => {
+      const content = contentRef.current
+      if (!content) {
+        autoScrollRef.current = 0
+        return
+      }
+      autoScrollRef.current = autoScrollSpeed(event.clientX, content.getBoundingClientRect())
+    }
+    document.addEventListener('dragover', onDragOver)
+    const stop = startAutoScroll(
+      () => contentRef.current,
+      () => autoScrollRef.current,
+    )
+    return () => {
+      document.removeEventListener('dragover', onDragOver)
+      stop()
+      autoScrollRef.current = 0
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragTask])
+
   /**
    * Applies a drop. Terminal targets are confirmed first: they stop whatever is
    * running on the task and bypass the rest of its workflow.
@@ -141,8 +176,15 @@ export function KanbanBoard({
           ref={railRef}
           onScroll={syncFrom('rail')}
           aria-hidden
-          title="Scroll the board horizontally"
-          className="overflow-x-auto overflow-y-hidden"
+          title={
+            dragTask
+              ? 'Drag to the left or right edge to scroll the board'
+              : 'Scroll the board horizontally'
+          }
+          className={cn(
+            'overflow-x-auto overflow-y-hidden transition-colors',
+            dragTask && 'bg-primary/5',
+          )}
         >
           <div style={{ width: railWidth }} className="h-px" />
         </div>
@@ -160,7 +202,13 @@ export function KanbanBoard({
           '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
         )}
       >
-        <div className="flex min-w-max items-start gap-3">
+        <div
+          className="flex min-w-max items-start gap-3"
+          // A drop anywhere on the board stops the autoscroll immediately.
+          onDrop={() => {
+            autoScrollRef.current = 0
+          }}
+        >
           {sorted.map((column) => {
             const meta = taskStatusMeta(column.statuses[0])
             // While a card is being dragged, every column shows whether it can

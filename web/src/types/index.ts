@@ -294,6 +294,28 @@ export interface ProjectStats {
   containers: number
   planning_jobs: number
   running_executions: number
+  /** Aggregated agent execution time, token usage and cost. */
+  metrics: ExecutionTotals
+}
+
+/**
+ * Aggregated runtime cost of a project's executions: how long agents worked and
+ * what they consumed. Computed from the append-only execution history.
+ */
+export interface ExecutionTotals {
+  executions: number
+  finished: number
+  /** Summed wall-clock time of finished executions: agent time, not project time. */
+  duration_ms: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  reasoning_tokens: number
+  steps: number
+  /** Provider-reported cost, summed. Zero when no harness reports cost. */
+  cost_usd: number
 }
 
 export interface BoardColumn {

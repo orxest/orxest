@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orxest/orxest/internal/adapters/fake"
+	"github.com/orxest/orxest/internal/adapters/sqlite"
 	"github.com/orxest/orxest/internal/api"
 	"github.com/orxest/orxest/internal/domain"
 	"github.com/orxest/orxest/internal/ports"
@@ -23,6 +24,10 @@ type testEnv struct {
 	t      *testing.T
 	server *httptest.Server
 	repo   string
+	// store is the live repository behind the server, so a test can seed state
+	// the public API cannot create (for example a finished execution carrying
+	// harness metrics).
+	store *sqlite.DB
 }
 
 func (e *testEnv) do(method, path string, body any) *http.Response {
@@ -85,7 +90,7 @@ func newEnv(t *testing.T, harness *fake.Harness) *testEnv {
 	})
 	server := httptest.NewServer(api.New(cfg, svc, nil, nil).Handler())
 	t.Cleanup(server.Close)
-	return &testEnv{t: t, server: server, repo: repo}
+	return &testEnv{t: t, server: server, repo: repo, store: svc.Deps.Store.(*sqlite.DB)}
 }
 
 type listEnvelope[T any] struct {
@@ -830,5 +835,91 @@ func TestBoardAndTaskDetailAreTaskFirst(t *testing.T) {
 		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
 			t.Errorf("removed route %s must not be served, got %d", path, resp.StatusCode)
 		}
+	}
+}
+
+// TestProjectStatsIncludesExecutionUsage covers the dashboard usage area: the
+// stats endpoint must report aggregated agent time and token usage from the
+// execution history, and zeroes (not nulls) for a project that has not run.
+func TestProjectStatsIncludesExecutionUsage(t *testing.T) {
+	env := newEnv(t, fake.New())
+	var bundle struct {
+		Project domain.Project `json:"project"`
+	}
+	env.expect("POST", "/api/projects", map[string]any{
+		"name":              "Usage",
+		"repository_path":   env.repo,
+		"target_branch":     "main",
+		"workflow_template": "minimal",
+		"agents":            []map[string]any{{"name": "dev", "harness": "fake", "role": "developer"}},
+	}, http.StatusCreated, &bundle)
+	projectID := bundle.Project.ID
+
+	type totals struct {
+		Executions  int     `json:"executions"`
+		DurationMs  int64   `json:"duration_ms"`
+		TotalTokens int64   `json:"total_tokens"`
+		CostUSD     float64 `json:"cost_usd"`
+	}
+	type stats struct {
+		Tasks   int    `json:"tasks"`
+		Metrics totals `json:"metrics"`
+	}
+
+	// A project that has not run reports zeroes, never a missing object.
+	var initial stats
+	env.expect("GET", "/api/projects/"+projectID+"/stats", nil, http.StatusOK, &initial)
+	if initial.Metrics.Executions != 0 || initial.Metrics.TotalTokens != 0 {
+		t.Errorf("expected zero usage before any execution, got %+v", initial.Metrics)
+	}
+	raw := decode[map[string]any](t, env.do("GET", "/api/projects/"+projectID+"/stats", nil))
+	if raw["metrics"] == nil {
+		t.Error("the stats payload must always carry a metrics object")
+	}
+
+	// Record an execution with metrics and confirm it is aggregated.
+	var task domain.Task
+	env.expect("POST", "/api/projects/"+projectID+"/tasks", map[string]any{
+		"title": "Counts towards usage", "acceptance_criteria": "ac",
+	}, http.StatusCreated, &task)
+
+	started := time.Now().UTC().Add(-90 * time.Second)
+	finished := time.Now().UTC()
+	exec := &domain.Execution{
+		ID:         domain.NewID(domain.IDPrefixExecution),
+		ProjectID:  projectID,
+		TaskID:     task.ID,
+		AgentID:    "agt_usage",
+		AgentName:  "dev",
+		RoleID:     domain.RoleDeveloper,
+		Harness:    "fake",
+		Status:     domain.ExecutionCompleted,
+		Outcome:    domain.OutcomeSuccess,
+		Attempt:    1,
+		CreatedAt:  started,
+		StartedAt:  &started,
+		FinishedAt: &finished,
+		Metrics: domain.ExecutionMetrics{
+			InputTokens: 1200, OutputTokens: 300, TotalTokens: 1500,
+			CacheReadTokens: 600, Steps: 4, CostUSD: 0.42,
+		},
+	}
+	if err := env.store.Executions().Create(context.Background(), exec); err != nil {
+		t.Fatalf("creating the execution: %v", err)
+	}
+
+	var after stats
+	env.expect("GET", "/api/projects/"+projectID+"/stats", nil, http.StatusOK, &after)
+	if after.Metrics.Executions != 1 || after.Metrics.TotalTokens != 1500 {
+		t.Fatalf("unexpected aggregated usage %+v", after.Metrics)
+	}
+	if after.Metrics.DurationMs < 89_000 || after.Metrics.DurationMs > 91_000 {
+		t.Errorf("expected roughly 90s of agent time, got %dms", after.Metrics.DurationMs)
+	}
+	if after.Metrics.CostUSD < 0.41 || after.Metrics.CostUSD > 0.43 {
+		t.Errorf("expected the reported cost to be summed, got %v", after.Metrics.CostUSD)
+	}
+	if after.Tasks != 1 {
+		t.Errorf("expected the task counter to be unaffected by usage metrics, got %d", after.Tasks)
 	}
 }

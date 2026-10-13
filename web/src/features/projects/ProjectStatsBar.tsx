@@ -1,4 +1,5 @@
 import type { UseQueryResult } from '@tanstack/react-query'
+import { Clock, Coins, Hash } from 'lucide-react'
 import * as React from 'react'
 
 import { errorMessage } from '@/api/client'
@@ -8,9 +9,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useProjectAgents, useProjectStats } from '@/hooks/queries'
+import { compactNumber, formatDurationMs } from '@/lib/format'
 import { TASK_STATUS_META, TASK_STATUS_ORDER } from '@/lib/status'
 import { cn } from '@/lib/utils'
-import type { ProjectStats, TaskStatus } from '@/types'
+import type { ExecutionTotals, ProjectStats, TaskStatus } from '@/types'
 
 /** One compact dashboard tile. */
 function StatTile({
@@ -141,6 +143,91 @@ export function ProjectStatsBar({
           {(agents.data?.items.length ?? 0) === 1 ? '' : 's'}
         </span>
       </div>
+
+      <ExecutionUsage metrics={data.metrics} />
+    </div>
+  )
+}
+
+/**
+ * What the agents have cost the project so far: how long they worked in total
+ * and what they consumed. Only the figures a harness actually reports are
+ * shown, so a deployment that reports no tokens does not imply zero usage.
+ */
+function ExecutionUsage({ metrics }: { metrics: ExecutionTotals | undefined }) {
+  if (!metrics || metrics.executions === 0) return null
+
+  const tokensReported = metrics.total_tokens > 0 || metrics.input_tokens > 0
+  const cacheReported = metrics.cache_read_tokens > 0 || metrics.cache_write_tokens > 0
+  const stepsReported = metrics.steps > 0
+  const costReported = metrics.cost_usd > 0
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border bg-card/50 px-2.5 py-1.5"
+      title="Aggregated over every recorded execution, including internal planning runs. Agent time is the sum of each execution's span, so parallel work counts once per execution."
+    >
+      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <Clock className="size-3.5" />
+        Agent time
+        <span className="font-mono text-xs font-semibold text-foreground">
+          {formatDurationMs(metrics.duration_ms)}
+        </span>
+      </span>
+
+      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <Coins className="size-3.5" />
+        {metrics.executions} execution{metrics.executions === 1 ? '' : 's'}
+        <span className="text-muted-foreground/70">
+          ({metrics.finished} finished)
+        </span>
+      </span>
+
+      {tokensReported ? (
+        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Hash className="size-3.5" />
+          Tokens
+          <span className="font-mono text-xs font-semibold text-foreground">
+            {compactNumber(metrics.total_tokens)}
+          </span>
+          <span className="font-mono text-muted-foreground/70">
+            {compactNumber(metrics.input_tokens)} in / {compactNumber(metrics.output_tokens)} out
+          </span>
+        </span>
+      ) : null}
+
+      {cacheReported ? (
+        <span
+          className="text-[11px] text-muted-foreground"
+          title="Cache reads are re-used prompt tokens; cache writes populate the cache"
+        >
+          cache{' '}
+          <span className="font-mono">
+            {compactNumber(metrics.cache_read_tokens)}r / {compactNumber(metrics.cache_write_tokens)}w
+          </span>
+        </span>
+      ) : null}
+
+      {metrics.reasoning_tokens > 0 ? (
+        <span className="text-[11px] text-muted-foreground">
+          reasoning <span className="font-mono">{compactNumber(metrics.reasoning_tokens)}</span>
+        </span>
+      ) : null}
+
+      {stepsReported ? (
+        <span className="text-[11px] text-muted-foreground">
+          steps <span className="font-mono">{compactNumber(metrics.steps)}</span>
+        </span>
+      ) : null}
+
+      {costReported ? (
+        <span className="ml-auto flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          Reported cost
+          <span className="font-mono text-xs font-semibold text-foreground">
+            ${metrics.cost_usd.toFixed(metrics.cost_usd < 1 ? 4 : 2)}
+          </span>
+        </span>
+      ) : null}
     </div>
   )
 }

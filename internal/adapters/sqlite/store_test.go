@@ -693,3 +693,111 @@ func TestCascadeAndContainerSafety(t *testing.T) {
 		t.Fatalf("expected the subtree to cascade, got %v", err)
 	}
 }
+
+// TestExecutionTotalsAggregateTimeAndTokens covers the dashboard statistic: the
+// totals must sum execution time and token/cost usage from the append-only
+// history, per project and across every project.
+func TestExecutionTotalsAggregateTimeAndTokens(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t, "orxest.db")
+	project := newProject(t, store, "Totals")
+	other := newProject(t, store, "Other totals")
+
+	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	finished := func(task *domain.Task, offset, duration time.Duration, metrics domain.ExecutionMetrics) {
+		t.Helper()
+		started := base.Add(offset)
+		ended := started.Add(duration)
+		exec := &domain.Execution{
+			ID:         domain.NewID(domain.IDPrefixExecution),
+			ProjectID:  task.ProjectID,
+			TaskID:     task.ID,
+			AgentID:    "agt_1",
+			AgentName:  "dev",
+			RoleID:     domain.RoleDeveloper,
+			Harness:    "fake",
+			Status:     domain.ExecutionCompleted,
+			Outcome:    domain.OutcomeSuccess,
+			Attempt:    1,
+			Metrics:    metrics,
+			CreatedAt:  started,
+			StartedAt:  &started,
+			FinishedAt: &ended,
+		}
+		if err := store.Executions().Create(ctx, exec); err != nil {
+			t.Fatalf("creating execution: %v", err)
+		}
+	}
+
+	first := newTask(t, store, project.ID, "first")
+	second := newTask(t, store, project.ID, "second")
+	third := newTask(t, store, other.ID, "elsewhere")
+
+	finished(first, 0, 90*time.Second, domain.ExecutionMetrics{
+		InputTokens: 1000, OutputTokens: 200, TotalTokens: 1200,
+		CacheReadTokens: 400, ReasoningTokens: 50, Steps: 3, CostUSD: 0.25,
+	})
+	finished(second, time.Minute, 30*time.Second, domain.ExecutionMetrics{
+		InputTokens: 500, OutputTokens: 100, TotalTokens: 600, Steps: 1, CostUSD: 0.10,
+	})
+	finished(third, 0, 10*time.Second, domain.ExecutionMetrics{
+		InputTokens: 7, OutputTokens: 3, TotalTokens: 10,
+	})
+
+	// An execution that is still running contributes tokens but no duration.
+	running := &domain.Execution{
+		ID: domain.NewID(domain.IDPrefixExecution), ProjectID: project.ID, TaskID: second.ID,
+		AgentID: "agt_1", AgentName: "dev", RoleID: domain.RoleDeveloper, Harness: "fake",
+		Status: domain.ExecutionRunning, Attempt: 2, CreatedAt: base,
+		StartedAt: func() *time.Time { ts := base.Add(2 * time.Minute); return &ts }(),
+	}
+	if err := store.Executions().Create(ctx, running); err != nil {
+		t.Fatalf("creating the running execution: %v", err)
+	}
+
+	totals, err := store.Executions().Totals(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("totals: %v", err)
+	}
+	if totals.Executions != 3 || totals.Finished != 2 {
+		t.Errorf("expected 3 executions of which 2 finished, got %d/%d", totals.Executions, totals.Finished)
+	}
+	if totals.DurationMs != 120_000 {
+		t.Errorf("expected 90s + 30s of agent time, got %dms", totals.DurationMs)
+	}
+	if totals.InputTokens != 1500 || totals.OutputTokens != 300 || totals.TotalTokens != 1800 {
+		t.Errorf("unexpected token totals: %+v", totals)
+	}
+	if totals.CacheReadTokens != 400 || totals.ReasoningTokens != 50 || totals.Steps != 4 {
+		t.Errorf("unexpected metric subsets: %+v", totals)
+	}
+	if totals.CostUSD < 0.349 || totals.CostUSD > 0.351 {
+		t.Errorf("expected 0.35 USD of reported cost, got %v", totals.CostUSD)
+	}
+
+	// The other project is counted on its own, and an empty id covers all of them.
+	otherTotals, err := store.Executions().Totals(ctx, other.ID)
+	if err != nil {
+		t.Fatalf("totals for the other project: %v", err)
+	}
+	if otherTotals.Executions != 1 || otherTotals.TotalTokens != 10 || otherTotals.DurationMs != 10_000 {
+		t.Errorf("unexpected per-project totals: %+v", otherTotals)
+	}
+	all, err := store.Executions().Totals(ctx, "")
+	if err != nil {
+		t.Fatalf("totals across projects: %v", err)
+	}
+	if all.Executions != 4 || all.TotalTokens != 1810 || all.DurationMs != 130_000 {
+		t.Errorf("unexpected global totals: %+v", all)
+	}
+
+	// A project with no executions is all zeroes, never an error or a null.
+	empty := newProject(t, store, "Nothing ran")
+	none, err := store.Executions().Totals(ctx, empty.ID)
+	if err != nil {
+		t.Fatalf("totals for an idle project: %v", err)
+	}
+	if none.Executions != 0 || none.TotalTokens != 0 || none.CostUSD != 0 {
+		t.Errorf("expected zero totals for an idle project, got %+v", none)
+	}
+}

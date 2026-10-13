@@ -485,6 +485,10 @@ type ProjectStats struct {
 	Containers        int            `json:"containers"`
 	Planning          int            `json:"planning_jobs"`
 	RunningExecutions int            `json:"running_executions"`
+	// Metrics is the aggregated agent cost of the project: total execution
+	// time, token usage and the provider-reported cost when a harness supplies
+	// it. It covers every execution, including the internal planning runs.
+	Metrics repository.ExecutionTotals `json:"metrics"`
 }
 
 // Stats computes dashboard counters.
@@ -514,8 +518,13 @@ func (s *ProjectService) Stats(ctx context.Context, id string) (*ProjectStats, e
 	if err != nil {
 		return nil, err
 	}
+	totals, err := s.deps.Store.Executions().Totals(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 	stats := &ProjectStats{
 		TaskStatus: map[string]int{},
+		Metrics:    totals,
 	}
 	for status, n := range taskCounts {
 		stats.TaskStatus[string(status)] = n

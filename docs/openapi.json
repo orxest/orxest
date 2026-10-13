@@ -2719,6 +2719,58 @@
           "containers": {
             "type": "integer"
           },
+          "metrics": {
+            "additionalProperties": false,
+            "properties": {
+              "cache_read_tokens": {
+                "type": "integer"
+              },
+              "cache_write_tokens": {
+                "type": "integer"
+              },
+              "cost_usd": {
+                "type": "number"
+              },
+              "duration_ms": {
+                "type": "integer"
+              },
+              "executions": {
+                "type": "integer"
+              },
+              "finished": {
+                "type": "integer"
+              },
+              "input_tokens": {
+                "type": "integer"
+              },
+              "output_tokens": {
+                "type": "integer"
+              },
+              "reasoning_tokens": {
+                "type": "integer"
+              },
+              "steps": {
+                "type": "integer"
+              },
+              "total_tokens": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "executions",
+              "finished",
+              "duration_ms",
+              "input_tokens",
+              "output_tokens",
+              "total_tokens",
+              "cache_read_tokens",
+              "cache_write_tokens",
+              "reasoning_tokens",
+              "steps",
+              "cost_usd"
+            ],
+            "type": "object"
+          },
           "planning_jobs": {
             "type": "integer"
           },
@@ -2740,7 +2792,8 @@
           "task_status",
           "containers",
           "planning_jobs",
-          "running_executions"
+          "running_executions",
+          "metrics"
         ],
         "type": "object"
       },

@@ -158,6 +158,57 @@ func (r *executionRepo) CountActiveByProject(ctx context.Context) (map[string]in
 	return r.countActive(ctx, "project_id")
 }
 
+// Totals aggregates execution time and token usage over the append-only history.
+//
+// The sum is accumulated in Go rather than in SQL: execution timestamps carry
+// nanosecond precision, and SQLite's date functions are double based, so a SQL
+// SUM of timestamp differences drifts by up to a millisecond per execution. The
+// query therefore projects the few columns the totals need, and the arithmetic
+// stays exact.
+func (r *executionRepo) Totals(ctx context.Context, projectID string) (repository.ExecutionTotals, error) {
+	query := `SELECT status, started_at, finished_at, metrics FROM executions`
+	args := []any{}
+	if projectID != "" {
+		query += ` WHERE project_id = ?`
+		args = append(args, projectID)
+	}
+	rows, err := r.q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return repository.ExecutionTotals{}, fmt.Errorf("sqlite: totalling executions: %w", err)
+	}
+	defer rows.Close()
+
+	var totals repository.ExecutionTotals
+	for rows.Next() {
+		var (
+			status      string
+			startedAt   sql.NullString
+			finishedAt  sql.NullString
+			metricsJSON string
+		)
+		if err := rows.Scan(&status, &startedAt, &finishedAt, &metricsJSON); err != nil {
+			return repository.ExecutionTotals{}, err
+		}
+		execution := domain.Execution{Status: domain.ExecutionStatus(status)}
+		// A malformed timestamp or metrics blob must not fail the dashboard; the
+		// execution simply contributes what could be read.
+		if ts, err := scanNullTime(startedAt); err == nil {
+			execution.StartedAt = ts
+		}
+		if ts, err := scanNullTime(finishedAt); err == nil {
+			execution.FinishedAt = ts
+		}
+		if err := decodeJSON(metricsJSON, &execution.Metrics); err != nil {
+			execution.Metrics = domain.ExecutionMetrics{}
+		}
+		totals.Add(execution)
+	}
+	if err := rows.Err(); err != nil {
+		return repository.ExecutionTotals{}, err
+	}
+	return totals, nil
+}
+
 func (r *executionRepo) countActive(ctx context.Context, column string) (map[string]int, error) {
 	rows, err := r.q.QueryContext(ctx, `
 		SELECT `+column+`, COUNT(*) FROM executions
